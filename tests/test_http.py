@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 import pytest
 
-from wa_providers import ProviderTransportError
+from wa_providers import ProviderAPIError, ProviderTransportError
 from wa_providers.http import PooledHTTPClient
 
 TransportHandler = Callable[[httpx.Request], httpx.Response]
@@ -139,6 +139,24 @@ async def test_retry_false_disables_get_retry() -> None:
             await client.request("GET", "/health", retry=False)
 
         assert calls == 1
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_unexpected_redirect_is_not_returned_as_binary_success() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            302,
+            headers={"Location": "https://other.example.test/media"},
+        )
+
+    client = await _client_with_mock_transport(handler)
+    try:
+        with pytest.raises(ProviderTransportError, match="redirect") as error:
+            await client.request_bytes("GET", "/media")
+
+        assert error.value.status_code == 302
     finally:
         await client.aclose()
 
@@ -329,3 +347,65 @@ async def test_context_manager_closes_underlying_client() -> None:
         assert underlying_client.is_closed is False
 
     assert underlying_client.is_closed is True
+
+
+@pytest.mark.asyncio
+async def test_request_bytes_returns_content_and_headers_after_safe_get_retry() -> None:
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(503, json={"error": "temporarily unavailable"})
+        return httpx.Response(
+            200,
+            content=b"binary-content",
+            headers={"content-type": "application/octet-stream", "x-media-id": "media-1"},
+        )
+
+    client = await _client_with_mock_transport(handler, max_retries=1)
+    try:
+        response = await client.request_bytes("GET", "/media")
+
+        assert calls == 2
+        assert response.content == b"binary-content"
+        assert response.headers["content-type"] == "application/octet-stream"
+        assert response.headers["x-media-id"] == "media-1"
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_request_bytes_post_does_not_retry_by_default() -> None:
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(503, json={"error": "temporarily unavailable"})
+
+    client = await _client_with_mock_transport(handler, max_retries=3)
+    try:
+        with pytest.raises(ProviderTransportError):
+            await client.request_bytes("POST", "/media")
+
+        assert calls == 1
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_request_bytes_preserves_api_error_details() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"error": "media not found"})
+
+    client = await _client_with_mock_transport(handler)
+    try:
+        with pytest.raises(ProviderAPIError) as error:
+            await client.request_bytes("GET", "/missing-media")
+
+        assert error.value.status_code == 404
+        assert error.value.body == {"error": "media not found"}
+    finally:
+        await client.aclose()

@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import math
 import random
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -31,6 +32,12 @@ RETRYABLE_TRANSPORT_ERRORS = (
     httpx.ProxyError,
     httpx.RemoteProtocolError,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class BinaryResponse:
+    content: bytes
+    headers: httpx.Headers
 
 
 def _safe_json(resp: httpx.Response) -> dict[str, Any]:
@@ -109,6 +116,29 @@ class PooledHTTPClient:
         Un caller puede habilitar o deshabilitar reintentos explicitamente cuando
         conoce la semantica del endpoint.
         """
+        resp = await self._request_response(method, path, retry=retry, **kwargs)
+        return _safe_json(resp)
+
+    async def request_bytes(
+        self,
+        method: str,
+        path: str,
+        *,
+        retry: bool | None = None,
+        **kwargs: Any,
+    ) -> BinaryResponse:
+        """Ejecuta una solicitud y conserva contenido binario y headers."""
+        resp = await self._request_response(method, path, retry=retry, **kwargs)
+        return BinaryResponse(content=resp.content, headers=resp.headers)
+
+    async def _request_response(
+        self,
+        method: str,
+        path: str,
+        *,
+        retry: bool | None,
+        **kwargs: Any,
+    ) -> httpx.Response:
         normalized_method = method.upper()
         retry_enabled = normalized_method in RETRYABLE_METHODS if retry is None else retry
         attempt = 0
@@ -133,6 +163,13 @@ class PooledHTTPClient:
                 attempt += 1
                 continue
 
+            if 300 <= resp.status_code < 400:
+                raise ProviderTransportError(
+                    f"HTTP redirect inesperado {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=_safe_json(resp),
+                )
+
             if resp.status_code >= 400:
                 raise ProviderAPIError(
                     f"HTTP {resp.status_code}",
@@ -140,7 +177,7 @@ class PooledHTTPClient:
                     body=_safe_json(resp),
                 )
 
-            return _safe_json(resp)
+            return resp
 
     async def _sleep_backoff(self, attempt: int, resp: httpx.Response | None = None) -> None:
         delay: float | None = None

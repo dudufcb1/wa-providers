@@ -47,6 +47,35 @@ class SendResult(BaseModel):
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
+class MediaContent(BaseModel):
+    """Contenido multimedia normalizado de un mensaje entrante."""
+
+    id: str | None = None
+    url: str | None = None
+    mime_type: str | None = None
+    filename: str | None = None
+    caption: str | None = None
+
+
+class InteractiveContent(BaseModel):
+    """Seleccion interactiva normalizada de un boton o una lista."""
+
+    type: str | None = None
+    id: str | None = None
+    title: str | None = None
+
+
+class MediaDownload(BaseModel):
+    """Resultado normalizado de una descarga multimedia."""
+
+    provider: str
+    content: bytes | None = None
+    base64: str | None = None
+    mime_type: str | None = None
+    filename: str | None = None
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
 class InboundMessage(BaseModel):
     """Mensaje entrante ya normalizado."""
 
@@ -54,10 +83,13 @@ class InboundMessage(BaseModel):
     channel_number: str  # el numero/instancia del negocio que recibio (phone_number_id o instance)
     from_number: str  # remitente (wa_id)
     message_id: str
+    sender_name: str | None = None
+    from_me: bool = False
+    remote_jid: str | None = None
     type: MessageType = MessageType.UNKNOWN
     text: str | None = None
-    media: dict[str, Any] | None = None  # id/link, mime_type, filename, caption
-    interactive: dict[str, Any] | None = None  # respuesta de boton/lista
+    media: MediaContent | None = None
+    interactive: InteractiveContent | None = None
     timestamp: datetime | None = None
     raw: dict[str, Any] = Field(default_factory=dict)
 

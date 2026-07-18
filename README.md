@@ -70,7 +70,49 @@ for s in statuses:
     print(s.message_id, s.status)   # sent/delivered/read/failed
 ```
 
-Para Evolution: `parse_evolution(payload)`.
+Para Evolution: `parse_evolution(payload)`. Los eventos `MESSAGES_UPDATE` se
+normalizan por separado con `parse_evolution_status(payload)`. El mensaje conserva
+`sender_name`, `from_me`, `remote_jid` y media tipada. Las selecciones interactivas
+de Cloud API se reducen a `type`, `id` y `title`. Cada parser de Evolution acepta
+solo su tipo de evento, para que un status no entre al flujo como mensaje. Un `@lid`
+que no se pueda resolver a un numero real se descarta en lugar de crear una identidad
+falsa.
+
+## Capacidades especificas
+
+El contrato comun se mantiene en `send_text` y `send_document`. Las funciones que
+solo existen en un proveedor se exponen mediante Protocols comprobables en runtime:
+
+- Cloud API: `TemplateSender`, `InteractiveSender`, `CloudMediaDownloader`,
+  `ReadMarker` y `HealthChecker`.
+- Evolution: `GenericMediaSender`, `EvolutionMediaDownloader` y
+  `WebhookConfigurator`.
+
+```python
+from wa_providers import InteractiveSender
+
+if isinstance(wa, InteractiveSender):
+    await wa.send_buttons(
+        "5215512345678",
+        "Elige una opcion",
+        [{"id": "continue", "title": "Continuar"}],
+    )
+```
+
+`CloudAPIClient.get_media(media_id)` devuelve bytes y metadata tipada. Evolution
+acepta el objeto completo del webhook o la forma minima con `key.id` que la API usa
+para recuperar el mensaje almacenado:
+
+```python
+download = await evolution.get_media_base64(inbound.raw["data"])
+```
+
+`EvolutionClient.set_webhook(...)` usa el contrato anidado de Evolution API 2.3.7
+con `enabled`, `byEvents`, `base64` y `events` dentro de `webhook`.
+
+Los flujos conversacionales son opcionales. Un proyecto puede usar este paquete
+solo para CRM o atencion manual; cuando necesita menus o agentes, Waflow consume
+estos mismos mensajes y capacidades sin crear un segundo cliente de WhatsApp.
 
 ## Qué va en el paquete y qué en tu app
 
@@ -85,6 +127,9 @@ normalizados) funciona igual en ambos. Lo específico vive en cada cliente:
 | | Cloud API (WABA) | Evolution |
 |---|---|---|
 | Plantillas / ventana 24h | sí (`send_template`) | no |
+| Listas y botones nativos | sí (`send_list`, `send_buttons`) | no |
+| Media generica | documentos | sí (`send_media`) |
+| Descarga de media | bytes (`get_media`) | base64 (`get_media_base64`) |
 | Grupos | no | sí |
 | Texto libre cuando quieras | solo dentro de 24h | sí |
 

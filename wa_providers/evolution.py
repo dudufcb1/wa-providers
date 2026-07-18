@@ -10,8 +10,9 @@ from __future__ import annotations
 from typing import Any
 
 from .base import BaseProvider
+from .exceptions import ProviderTransportError
 from .http import PooledHTTPClient
-from .schemas import SendResult
+from .schemas import MediaDownload, SendResult
 
 _POOL_KEYS = (
     "timeout",
@@ -26,6 +27,12 @@ _POOL_KEYS = (
 def _evo_id(data: dict[str, Any]) -> str | None:
     key = data.get("key")
     return key.get("id") if isinstance(key, dict) else None
+
+
+def _required_text(value: str | None, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} no puede estar vacio")
+    return value
 
 
 class EvolutionClient(BaseProvider):
@@ -61,13 +68,37 @@ class EvolutionClient(BaseProvider):
     ) -> SendResult:
         if not link:
             raise ValueError("Evolution send_document requiere link (url o base64)")
-        payload = {
+        return await self.send_media(
+            to,
+            link,
+            media_type="document",
+            filename=filename,
+            caption=caption,
+        )
+
+    async def send_media(
+        self,
+        to: str,
+        media: str,
+        media_type: str = "document",
+        mime_type: str | None = None,
+        filename: str | None = None,
+        caption: str | None = None,
+    ) -> SendResult:
+        _required_text(to, "to")
+        _required_text(media, "media")
+        _required_text(media_type, "media_type")
+        payload: dict[str, Any] = {
             "number": to,
-            "mediatype": "document",
-            "media": link,
-            "fileName": filename,
-            "caption": caption,
+            "mediatype": media_type,
+            "media": media,
         }
+        if mime_type is not None:
+            payload["mimetype"] = mime_type
+        if filename is not None:
+            payload["fileName"] = filename
+        if caption is not None:
+            payload["caption"] = caption
         data = await self._http.request(
             "POST",
             f"/message/sendMedia/{self.instance}",
@@ -76,15 +107,62 @@ class EvolutionClient(BaseProvider):
         )
         return SendResult(provider="evolution", message_id=_evo_id(data), accepted=True, raw=data)
 
-    async def set_webhook(self, url: str, events: list[str] | None = None) -> dict[str, Any]:
-        payload = {
-            "url": url,
-            "webhook_by_events": False,
+    async def get_media_base64(
+        self,
+        message: dict[str, Any],
+        convert_to_mp4: bool = False,
+    ) -> MediaDownload:
+        if not isinstance(message, dict):
+            raise TypeError("message debe ser un objeto de Evolution")
+        key = message.get("key")
+        if not isinstance(key, dict) or not isinstance(key.get("id"), str) or not key["id"]:
+            raise ValueError("message debe incluir key.id")
+
+        data = await self._http.request(
+            "POST",
+            f"/chat/getBase64FromMediaMessage/{self.instance}",
+            retry=False,
+            json={"message": message, "convertToMp4": convert_to_mp4},
+        )
+        encoded_media = data.get("base64")
+        if not isinstance(encoded_media, str) or not encoded_media:
+            raise ProviderTransportError(
+                "Evolution no devolvio contenido base64",
+                body=data,
+            )
+        mime_type = data.get("mimetype")
+        filename = data.get("fileName") or data.get("filename")
+        return MediaDownload(
+            provider="evolution",
+            content=None,
+            base64=encoded_media,
+            mime_type=mime_type if isinstance(mime_type, str) else None,
+            filename=filename if isinstance(filename, str) else None,
+            raw=data,
+        )
+
+    async def set_webhook(
+        self,
+        url: str,
+        events: list[str] | None = None,
+        *,
+        enabled: bool = True,
+        by_events: bool = False,
+        include_base64: bool = False,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        webhook: dict[str, Any] = {
+            "enabled": enabled,
+            "url": _required_text(url, "url"),
+            "byEvents": by_events,
+            "base64": include_base64,
             "events": events or ["MESSAGES_UPSERT", "MESSAGES_UPDATE"],
         }
+        if headers is not None:
+            webhook["headers"] = headers
         return await self._http.request(
             "POST",
             f"/webhook/set/{self.instance}",
             retry=True,
-            json=payload,
+            json={"webhook": webhook},
         )

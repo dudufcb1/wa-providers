@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wa-providers"
-version = "0.2.0"
+version = "0.3.0"
 description = "WhatsApp agnostico (Evolution + WhatsApp Cloud API) detras de una interfaz comun, con cliente httpx pooled y reintentos con backoff."
 readme = "README.md"
 requires-python = ">=3.10"
