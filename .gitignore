@@ -1,0 +1,36 @@
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Personal / working notes (never commit)
+HANDOFF*.md
+RESUMEN*.md
+ANALYSIS*.md
+NOTES*.md
+TODO*.md
+SCRATCH*
+notas/
+handoffs/
+analisis/
