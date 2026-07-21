@@ -35,6 +35,11 @@ def _required_text(value: str | None, field: str) -> str:
     return value
 
 
+# mediatype que acepta /message/sendMedia. Las notas de voz van por
+# /message/sendWhatsAppAudio, que este cliente todavia no expone.
+_MEDIA_TYPES = frozenset({"image", "video", "document", "audio"})
+
+
 class EvolutionClient(BaseProvider):
     provider_name = "evolution"
 
@@ -55,7 +60,15 @@ class EvolutionClient(BaseProvider):
             retry=False,
             json=payload,
         )
-        return SendResult(provider="evolution", message_id=_evo_id(data), accepted=True, raw=data)
+        message_id = _evo_id(data)
+        # Sin key.id el envio quedo ambiguo: no se puede correlacionar el estado
+        # de entrega ni reconciliar un reintento. No se reporta como aceptado.
+        return SendResult(
+            provider="evolution",
+            message_id=message_id,
+            accepted=message_id is not None,
+            raw=data,
+        )
 
     async def send_document(
         self,
@@ -88,6 +101,11 @@ class EvolutionClient(BaseProvider):
         _required_text(to, "to")
         _required_text(media, "media")
         _required_text(media_type, "media_type")
+        if media_type not in _MEDIA_TYPES:
+            raise ValueError(
+                f"media_type invalido: {media_type!r}. "
+                f"Validos: {', '.join(sorted(_MEDIA_TYPES))}"
+            )
         payload: dict[str, Any] = {
             "number": to,
             "mediatype": media_type,
@@ -105,7 +123,15 @@ class EvolutionClient(BaseProvider):
             retry=False,
             json=payload,
         )
-        return SendResult(provider="evolution", message_id=_evo_id(data), accepted=True, raw=data)
+        message_id = _evo_id(data)
+        # Sin key.id el envio quedo ambiguo: no se puede correlacionar el estado
+        # de entrega ni reconciliar un reintento. No se reporta como aceptado.
+        return SendResult(
+            provider="evolution",
+            message_id=message_id,
+            accepted=message_id is not None,
+            raw=data,
+        )
 
     async def get_media_base64(
         self,

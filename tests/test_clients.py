@@ -765,3 +765,45 @@ async def test_evolution_get_media_base64_rejects_missing_content(
         assert error.value.body == {"mimetype": "application/pdf"}
     finally:
         await client.aclose()
+
+
+@pytest.mark.anyio
+async def test_evolution_send_without_message_id_is_not_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    http = StubHTTPClient({"status": "PENDING"})
+    monkeypatch.setattr(evolution_module, "PooledHTTPClient", lambda **_kwargs: http)
+    client = EvolutionClient(
+        base_url="https://evolution.example.test",
+        api_key="evolution-key",
+        instance="recall-sales",
+    )
+
+    async with client:
+        result = await client.send_text("5215550000001", "Hola")
+
+    assert result.message_id is None
+    assert result.accepted is False
+
+
+@pytest.mark.anyio
+async def test_evolution_send_media_rejects_unknown_media_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    http = StubHTTPClient({"key": {"id": "evolution-media-id"}})
+    monkeypatch.setattr(evolution_module, "PooledHTTPClient", lambda **_kwargs: http)
+    client = EvolutionClient(
+        base_url="https://evolution.example.test",
+        api_key="evolution-key",
+        instance="recall-sales",
+    )
+
+    async with client:
+        with pytest.raises(ValueError, match="media_type invalido"):
+            await client.send_media(
+                "5215550000001",
+                "https://cdn.test/file.pdf",
+                media_type="documento",
+            )
+
+    assert http.calls == []

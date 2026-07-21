@@ -237,6 +237,14 @@ _EVOLUTION_MESSAGE_TYPES = {
     "documentMessage": MessageType.DOCUMENT,
     "audioMessage": MessageType.AUDIO,
     "videoMessage": MessageType.VIDEO,
+    "stickerMessage": MessageType.STICKER,
+    "locationMessage": MessageType.LOCATION,
+    "contactMessage": MessageType.CONTACTS,
+    "contactsArrayMessage": MessageType.CONTACTS,
+    "reactionMessage": MessageType.REACTION,
+    "buttonsResponseMessage": MessageType.INTERACTIVE,
+    "listResponseMessage": MessageType.INTERACTIVE,
+    "templateButtonReplyMessage": MessageType.INTERACTIVE,
 }
 
 _EVOLUTION_DELIVERY_STATUSES = {
@@ -250,16 +258,23 @@ _EVOLUTION_DELIVERY_STATUSES = {
 }
 
 
-def _clean_jid(value: str) -> str:
-    return value.split("@", 1)[0]
+# Unico sufijo que identifica a una persona en Baileys. Un JID con cualquier
+# otro (@g.us de grupo, @broadcast de estados, @newsletter de canales, @lid
+# opaco) no es un telefono y no puede tratarse como identidad del remitente.
+_PERSON_JID_SUFFIXES = frozenset({"s.whatsapp.net"})
 
 
-def _phone_identity(value: str, *, require_whatsapp_suffix: bool = False) -> str | None:
+def _phone_identity(
+    value: str,
+    *,
+    require_suffix: bool = False,
+    allowed_suffixes: frozenset[str] = _PERSON_JID_SUFFIXES,
+) -> str | None:
     if "@" in value:
         local_part, suffix = value.rsplit("@", 1)
-        if suffix != "s.whatsapp.net":
+        if suffix not in allowed_suffixes:
             return None
-    elif require_whatsapp_suffix:
+    elif require_suffix:
         return None
     else:
         local_part = value
@@ -267,28 +282,71 @@ def _phone_identity(value: str, *, require_whatsapp_suffix: bool = False) -> str
     return normalized if normalized.isascii() and normalized.isdigit() else None
 
 
+def _resolve_lid(
+    opaque_jid: str,
+    alt_jid: str | None,
+    sender_pn: str | None,
+) -> str | None:
+    """Resuelve un JID opaco (@lid) al telefono real, o None si no se puede.
+
+    WhatsApp multi-dispositivo entrega identificadores opacos en lugar del
+    numero. Se prefiere descartar el mensaje antes que fabricar una identidad.
+    """
+    resolved = (
+        _phone_identity(
+            alt_jid,
+            require_suffix=True,
+            allowed_suffixes=frozenset({"s.whatsapp.net"}),
+        )
+        if alt_jid
+        else None
+    )
+    if resolved is None and sender_pn:
+        resolved = _phone_identity(sender_pn)
+    return resolved
+
+
 def _evolution_sender(
     key: dict[str, Any],
     data: dict[str, Any],
-) -> tuple[str, str] | None:
+) -> tuple[str, str, bool] | None:
+    """Devuelve (telefono_del_autor, jid_original, es_grupo) o None si se descarta."""
     remote_jid = _string(key.get("remoteJid"))
     if not remote_jid:
         return None
-    resolved_jid = remote_jid
-    if remote_jid.endswith("@lid"):
-        remote_jid_alt = _string(key.get("remoteJidAlt"))
-        sender_pn = _string(key.get("senderPn")) or _string(data.get("senderPn"))
-        resolved_phone = (
-            _phone_identity(remote_jid_alt, require_whatsapp_suffix=True)
-            if remote_jid_alt
-            else None
-        )
-        if resolved_phone is None and sender_pn:
-            resolved_phone = _phone_identity(sender_pn)
-        if resolved_phone is None:
+
+    if remote_jid.endswith("@g.us"):
+        # En un grupo, remoteJid identifica al grupo: el autor viene aparte.
+        participant = _string(key.get("participant")) or _string(data.get("participant"))
+        if not participant:
             return None
-        return resolved_phone, remote_jid
-    return _clean_jid(resolved_jid), remote_jid
+        if participant.endswith("@lid"):
+            resolved = _resolve_lid(
+                participant,
+                _string(key.get("participantAlt")),
+                _string(key.get("participantPn")) or _string(data.get("participantPn")),
+            )
+        else:
+            resolved = _phone_identity(participant)
+        if resolved is None:
+            return None
+        return resolved, remote_jid, True
+
+    if remote_jid.endswith("@lid"):
+        resolved = _resolve_lid(
+            remote_jid,
+            _string(key.get("remoteJidAlt")),
+            _string(key.get("senderPn")) or _string(data.get("senderPn")),
+        )
+        if resolved is None:
+            return None
+        return resolved, remote_jid, False
+
+    # Cualquier otro sufijo (@broadcast, @newsletter) no es una persona.
+    resolved = _phone_identity(remote_jid)
+    if resolved is None:
+        return None
+    return resolved, remote_jid, False
 
 
 def _evolution_media(raw_media: Any) -> MediaContent:
@@ -302,31 +360,77 @@ def _evolution_media(raw_media: Any) -> MediaContent:
     )
 
 
+def _evolution_interactive(message: dict[str, Any]) -> InteractiveContent | None:
+    """Respuesta a botones o listas (Baileys tambien las recibe)."""
+    buttons = _mapping(message.get("buttonsResponseMessage"))
+    if buttons:
+        return InteractiveContent(
+            type="button_reply",
+            id=_string(buttons.get("selectedButtonId")),
+            title=_string(buttons.get("selectedDisplayText")),
+        )
+    template = _mapping(message.get("templateButtonReplyMessage"))
+    if template:
+        return InteractiveContent(
+            type="button_reply",
+            id=_string(template.get("selectedId")),
+            title=_string(template.get("selectedDisplayText")),
+        )
+    listed = _mapping(message.get("listResponseMessage"))
+    if listed:
+        reply = _mapping(listed.get("singleSelectReply"))
+        return InteractiveContent(
+            type="list_reply",
+            id=_string(reply.get("selectedRowId")),
+            title=_string(listed.get("title")),
+        )
+    return None
+
+
 def _evolution_content(
     data: dict[str, Any],
-) -> tuple[MessageType, str | None, MediaContent | None]:
+) -> tuple[MessageType, str | None, MediaContent | None, InteractiveContent | None]:
     message = _mapping(data.get("message"))
     if "conversation" in message:
-        return MessageType.TEXT, _string(message.get("conversation")), None
+        return MessageType.TEXT, _string(message.get("conversation")), None, None
     if "extendedTextMessage" in message:
         extended = _mapping(message.get("extendedTextMessage"))
-        return MessageType.TEXT, _string(extended.get("text")), None
+        return MessageType.TEXT, _string(extended.get("text")), None, None
+
+    interactive = _evolution_interactive(message)
+    if interactive is not None:
+        return MessageType.INTERACTIVE, interactive.title, None, interactive
 
     media_types = (
         ("imageMessage", MessageType.IMAGE),
         ("documentMessage", MessageType.DOCUMENT),
         ("audioMessage", MessageType.AUDIO),
         ("videoMessage", MessageType.VIDEO),
+        ("stickerMessage", MessageType.STICKER),
     )
     for field, message_type in media_types:
         if field in message:
             media = _evolution_media(message.get(field))
-            return message_type, None, media
+            return message_type, None, media, None
+
+    if "reactionMessage" in message:
+        reaction = _mapping(message.get("reactionMessage"))
+        return MessageType.REACTION, _string(reaction.get("text")), None, None
+
+    if "locationMessage" in message:
+        location = _mapping(message.get("locationMessage"))
+        label = _string(location.get("name")) or _string(location.get("address"))
+        return MessageType.LOCATION, label, None, None
+
+    for field in ("contactMessage", "contactsArrayMessage"):
+        if field in message:
+            contact = _mapping(message.get(field))
+            return MessageType.CONTACTS, _string(contact.get("displayName")), None, None
 
     raw_type = _string(data.get("messageType"))
     if raw_type in _EVOLUTION_MESSAGE_TYPES:
-        return _EVOLUTION_MESSAGE_TYPES[raw_type], None, None
-    return _mtype(raw_type), None, None
+        return _EVOLUTION_MESSAGE_TYPES[raw_type], None, None, None
+    return _mtype(raw_type), None, None, None
 
 
 def parse_evolution(payload: dict[str, Any]) -> list[InboundMessage]:
@@ -337,24 +441,29 @@ def parse_evolution(payload: dict[str, Any]) -> list[InboundMessage]:
     key = _mapping(data.get("key"))
     if not key:
         return []
+    # Sin id no hay forma de deduplicar ni de correlacionar el estado de entrega.
+    message_id = _string(key.get("id"))
+    if not message_id:
+        return []
     sender = _evolution_sender(key, data)
     if sender is None:
         return []
-    from_number, remote_jid = sender
-    message_type, text, media = _evolution_content(data)
+    from_number, remote_jid, is_group = sender
+    message_type, text, media, interactive = _evolution_content(data)
     return [
         InboundMessage(
             provider="evolution",
             channel_number=payload.get("instance", ""),
             from_number=from_number,
-            message_id=key.get("id", ""),
+            message_id=message_id,
             sender_name=_string(data.get("pushName")),
             from_me=bool(key.get("fromMe", False)),
+            is_group=is_group,
             remote_jid=remote_jid,
             type=message_type,
             text=text,
             media=media,
-            interactive=None,
+            interactive=interactive,
             timestamp=_epoch(data.get("messageTimestamp")),
             raw=payload,
         )

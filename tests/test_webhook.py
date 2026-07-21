@@ -732,3 +732,163 @@ def test_parse_evolution_status_does_not_treat_lid_as_phone_number() -> None:
     statuses = parse_evolution_status(payload)
 
     assert statuses[0].recipient is None
+
+
+def test_parse_evolution_ignores_broadcast_and_newsletter_jids() -> None:
+    for jid in ("status@broadcast", "120363000000000000@newsletter"):
+        payload = _evolution_payload(
+            {"conversation": "Difusion"},
+            key={"remoteJid": jid},
+        )
+
+        assert parse_evolution(payload) == []
+
+
+def test_parse_evolution_uses_group_participant_as_sender() -> None:
+    payload = _evolution_payload(
+        {"conversation": "Mensaje en grupo"},
+        key={
+            "remoteJid": "120363000000000000@g.us",
+            "participant": "5215550000009@s.whatsapp.net",
+        },
+    )
+
+    message = parse_evolution(payload)[0]
+
+    assert message.is_group is True
+    assert message.from_number == "5215550000009"
+    assert message.remote_jid == "120363000000000000@g.us"
+
+
+def test_parse_evolution_resolves_opaque_group_participant() -> None:
+    payload = _evolution_payload(
+        {"conversation": "Mensaje en grupo desde otro dispositivo"},
+        key={
+            "remoteJid": "120363000000000000@g.us",
+            "participant": "opaque-device-id@lid",
+            "participantAlt": "5215550000009@s.whatsapp.net",
+        },
+    )
+
+    message = parse_evolution(payload)[0]
+
+    assert message.is_group is True
+    assert message.from_number == "5215550000009"
+
+
+def test_parse_evolution_discards_group_without_resolvable_participant() -> None:
+    payload = _evolution_payload(
+        {"conversation": "Mensaje en grupo sin autor"},
+        key={
+            "remoteJid": "120363000000000000@g.us",
+            "participant": "opaque-device-id@lid",
+        },
+    )
+
+    assert parse_evolution(payload) == []
+
+
+def test_parse_evolution_marks_direct_messages_as_not_group() -> None:
+    payload = _evolution_payload({"conversation": "Mensaje directo"})
+
+    assert parse_evolution(payload)[0].is_group is False
+
+
+def test_parse_evolution_discards_message_without_id() -> None:
+    for empty_id in ("", None):
+        payload = _evolution_payload(
+            {"conversation": "Sin identificador"},
+            key={"id": empty_id},
+        )
+
+        assert parse_evolution(payload) == []
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_type", "expected_text"),
+    [
+        ({"reactionMessage": {"text": "\N{THUMBS UP SIGN}"}}, MessageType.REACTION, "\N{THUMBS UP SIGN}"),
+        (
+            {"locationMessage": {"degreesLatitude": 19.4, "name": "Oficina"}},
+            MessageType.LOCATION,
+            "Oficina",
+        ),
+        (
+            {"locationMessage": {"degreesLatitude": 19.4, "address": "Reforma 222"}},
+            MessageType.LOCATION,
+            "Reforma 222",
+        ),
+        (
+            {"contactMessage": {"displayName": "Renata", "vcard": "BEGIN:VCARD"}},
+            MessageType.CONTACTS,
+            "Renata",
+        ),
+    ],
+)
+def test_parse_evolution_maps_non_media_message_types(
+    message: dict[str, Any],
+    expected_type: MessageType,
+    expected_text: str,
+) -> None:
+    inbound = parse_evolution(_evolution_payload(message))[0]
+
+    assert inbound.type is expected_type
+    assert inbound.text == expected_text
+    assert inbound.media is None
+
+
+def test_parse_evolution_maps_sticker_as_media() -> None:
+    payload = _evolution_payload(
+        {"stickerMessage": {"mimetype": "image/webp", "url": "https://cdn.test/s.enc"}},
+    )
+
+    inbound = parse_evolution(payload)[0]
+
+    assert inbound.type is MessageType.STICKER
+    assert inbound.media == MediaContent(
+        mime_type="image/webp",
+        url="https://cdn.test/s.enc",
+    )
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (
+            {
+                "buttonsResponseMessage": {
+                    "selectedButtonId": "continuar",
+                    "selectedDisplayText": "Continuar",
+                }
+            },
+            InteractiveContent(type="button_reply", id="continuar", title="Continuar"),
+        ),
+        (
+            {
+                "templateButtonReplyMessage": {
+                    "selectedId": "continuar",
+                    "selectedDisplayText": "Continuar",
+                }
+            },
+            InteractiveContent(type="button_reply", id="continuar", title="Continuar"),
+        ),
+        (
+            {
+                "listResponseMessage": {
+                    "title": "Agendar",
+                    "singleSelectReply": {"selectedRowId": "slot-1"},
+                }
+            },
+            InteractiveContent(type="list_reply", id="slot-1", title="Agendar"),
+        ),
+    ],
+)
+def test_parse_evolution_normalizes_interactive_replies(
+    message: dict[str, Any],
+    expected: InteractiveContent,
+) -> None:
+    inbound = parse_evolution(_evolution_payload(message))[0]
+
+    assert inbound.type is MessageType.INTERACTIVE
+    assert inbound.interactive == expected
+    assert inbound.text == expected.title

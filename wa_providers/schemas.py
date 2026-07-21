@@ -85,6 +85,7 @@ class InboundMessage(BaseModel):
     message_id: str
     sender_name: str | None = None
     from_me: bool = False
+    is_group: bool = False  # en grupos, from_number es el participante que escribio
     remote_jid: str | None = None
     type: MessageType = MessageType.UNKNOWN
     text: str | None = None
