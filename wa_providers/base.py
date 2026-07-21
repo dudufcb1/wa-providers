@@ -8,10 +8,15 @@ en Cloud API; grupos solo en Evolution). No se finge simetria perfecta.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, TypeVar
 
 from .http import PooledHTTPClient
 from .schemas import SendResult
+
+# Conserva el tipo concreto al entrar al contexto: sin esto, `async with
+# EvolutionClient(...)` se ve como BaseProvider y se pierden las capacidades
+# propias del motor.
+_Provider = TypeVar("_Provider", bound="BaseProvider")
 
 
 class BaseProvider(ABC):
@@ -37,7 +42,7 @@ class BaseProvider(ABC):
     async def aclose(self) -> None:
         await self._http.aclose()
 
-    async def __aenter__(self) -> "BaseProvider":
+    async def __aenter__(self: _Provider) -> _Provider:
         return self
 
     async def __aexit__(self, *_exc: Any) -> None:
