@@ -82,6 +82,30 @@ class EvolutionMediaDownloader(Protocol):
 
 
 @runtime_checkable
+class InstanceManager(Protocol):
+    """Alta y vinculacion de numeros, para motores que las administran.
+
+    Cloud API no la implementa: ahi el numero se da de alta en Meta, no por API.
+    """
+
+    async def create_instance(
+        self,
+        instance_name: str,
+        *,
+        integration: str = "WHATSAPP-BAILEYS",
+        with_qr: bool = True,
+    ) -> dict[str, Any]: ...
+
+    async def connect(self, instance_name: str | None = None) -> dict[str, Any]: ...
+
+    async def connection_state(self, instance_name: str | None = None) -> str | None: ...
+
+    async def logout_instance(self, instance_name: str | None = None) -> dict[str, Any]: ...
+
+    async def delete_instance(self, instance_name: str | None = None) -> dict[str, Any]: ...
+
+
+@runtime_checkable
 class WebhookConfigurator(Protocol):
     async def set_webhook(
         self,

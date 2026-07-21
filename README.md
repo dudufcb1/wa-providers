@@ -122,8 +122,8 @@ solo existen en un proveedor se exponen mediante Protocols comprobables en runti
 
 - Cloud API: `TemplateSender`, `InteractiveSender`, `CloudMediaDownloader`,
   `ReadMarker` y `HealthChecker`.
-- Evolution: `GenericMediaSender`, `EvolutionMediaDownloader` y
-  `WebhookConfigurator`.
+- Evolution: `GenericMediaSender`, `EvolutionMediaDownloader`,
+  `WebhookConfigurator` e `InstanceManager`.
 
 ```python
 from wa_providers import InteractiveSender
@@ -172,9 +172,10 @@ del dominio. Vale la pena tenerlas presentes antes de partir de esta base:
    produce dos mensajes idénticos. La dedup va en tu almacenamiento, con
    `message_id` como clave única (un índice único sirve mejor que un chequeo en
    memoria, que no sobrevive a varias réplicas).
-3. **Administrar instancias de Evolution.** Crear, conectar por QR, consultar
-   estado o cerrar sesión no está expuesto: el cliente asume que la instancia ya
-   existe y está conectada.
+3. **Decidir cuándo dar de alta un número.** `InstanceManager` expone crear
+   instancia, pedir QR, consultar el estado de vinculación y cerrar sesión, pero
+   quién puede dar de alta, cuántos números caben y qué hacer mientras el QR está
+   en pantalla es del proyecto.
 4. **Filtrar `from_me`.** Los mensajes que el negocio manda desde su propio
    celular llegan con `from_me=True` y se entregan igual. Un bot querrá
    ignorarlos; un espejo de conversaciones querrá reflejarlos como salientes.
@@ -196,6 +197,7 @@ normalizados) funciona igual en ambos. Lo específico vive en cada cliente:
 | Enviar listas y botones | sí (`send_list`, `send_buttons`) | no |
 | Recibir respuesta de listas y botones | sí | sí (normalizada a `interactive`) |
 | Grupos | no | sí (`is_group`, autor en `from_number`) |
+| Alta de números por API | no (se dan de alta en Meta) | sí (`InstanceManager`, QR) |
 | Media generica | documentos | sí (`send_media`) |
 | Descarga de media | bytes (`get_media`) | base64 (`get_media_base64`) |
 | Texto libre cuando quieras | solo dentro de 24h | sí |

@@ -167,6 +167,58 @@ class EvolutionClient(BaseProvider):
             raw=data,
         )
 
+    # ------------------------------------------------------------- instancias
+
+    async def create_instance(
+        self,
+        instance_name: str,
+        *,
+        integration: str = "WHATSAPP-BAILEYS",
+        with_qr: bool = True,
+    ) -> dict[str, Any]:
+        """Da de alta un numero nuevo. La respuesta suele traer el primer QR.
+
+        El QR caduca en segundos: si el usuario tarda en escanearlo hay que
+        pedir uno nuevo con `connect()`, no volver a crear la instancia.
+        """
+        payload = {
+            "instanceName": _required_text(instance_name, "instance_name"),
+            "integration": integration,
+            "qrcode": with_qr,
+        }
+        return await self._http.request("POST", "/instance/create", retry=False, json=payload)
+
+    async def connect(self, instance_name: str | None = None) -> dict[str, Any]:
+        """Pide un QR (o codigo de emparejamiento) para vincular el telefono."""
+        target = _required_text(instance_name or self.instance, "instance_name")
+        return await self._http.request("GET", f"/instance/connect/{target}", retry=True)
+
+    async def connection_state(self, instance_name: str | None = None) -> str | None:
+        """Estado de la vinculacion: `close`, `connecting` u `open`.
+
+        `open` es el unico estado en el que la instancia puede enviar y recibir;
+        es lo que se consulta mientras el usuario tiene el QR en pantalla.
+        """
+        target = _required_text(instance_name or self.instance, "instance_name")
+        data = await self._http.request(
+            "GET",
+            f"/instance/connectionState/{target}",
+            retry=True,
+        )
+        instance = data.get("instance")
+        state = instance.get("state") if isinstance(instance, dict) else data.get("state")
+        return state if isinstance(state, str) else None
+
+    async def logout_instance(self, instance_name: str | None = None) -> dict[str, Any]:
+        """Desvincula el telefono sin borrar la instancia: se puede reconectar."""
+        target = _required_text(instance_name or self.instance, "instance_name")
+        return await self._http.request("DELETE", f"/instance/logout/{target}", retry=False)
+
+    async def delete_instance(self, instance_name: str | None = None) -> dict[str, Any]:
+        """Borra la instancia. Reconectar despues exige escanear un QR nuevo."""
+        target = _required_text(instance_name or self.instance, "instance_name")
+        return await self._http.request("DELETE", f"/instance/delete/{target}", retry=False)
+
     async def set_webhook(
         self,
         url: str,
@@ -176,6 +228,7 @@ class EvolutionClient(BaseProvider):
         by_events: bool = False,
         include_base64: bool = False,
         headers: dict[str, str] | None = None,
+        instance_name: str | None = None,
     ) -> dict[str, Any]:
         webhook: dict[str, Any] = {
             "enabled": enabled,
@@ -186,9 +239,10 @@ class EvolutionClient(BaseProvider):
         }
         if headers is not None:
             webhook["headers"] = headers
+        target = _required_text(instance_name or self.instance, "instance_name")
         return await self._http.request(
             "POST",
-            f"/webhook/set/{self.instance}",
+            f"/webhook/set/{target}",
             retry=True,
             json={"webhook": webhook},
         )

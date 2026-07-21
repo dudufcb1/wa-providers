@@ -807,3 +807,99 @@ async def test_evolution_send_media_rejects_unknown_media_type(
             )
 
     assert http.calls == []
+
+
+@pytest.mark.anyio
+async def test_evolution_creates_an_instance_asking_for_its_qr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    http = StubHTTPClient({"instance": {"instanceName": "linea-ventas"}, "qrcode": {"base64": "..."}})
+    monkeypatch.setattr(evolution_module, "PooledHTTPClient", lambda **_kwargs: http)
+    client = EvolutionClient(
+        base_url="https://evolution.example.test",
+        api_key="evolution-key",
+        instance="recall-sales",
+    )
+
+    async with client:
+        await client.create_instance("linea-ventas")
+
+    assert http.calls[0]["path"] == "/instance/create"
+    assert http.calls[0]["json"] == {
+        "instanceName": "linea-ventas",
+        "integration": "WHATSAPP-BAILEYS",
+        "qrcode": True,
+    }
+
+
+@pytest.mark.anyio
+async def test_evolution_reads_the_connection_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    http = StubHTTPClient({"instance": {"instanceName": "linea-ventas", "state": "open"}})
+    monkeypatch.setattr(evolution_module, "PooledHTTPClient", lambda **_kwargs: http)
+    client = EvolutionClient(
+        base_url="https://evolution.example.test",
+        api_key="evolution-key",
+        instance="recall-sales",
+    )
+
+    async with client:
+        estado = await client.connection_state("linea-ventas")
+
+    assert estado == "open"
+    assert http.calls[0]["path"] == "/instance/connectionState/linea-ventas"
+
+
+@pytest.mark.anyio
+async def test_evolution_instance_operations_default_to_the_configured_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    http = StubHTTPClient({"instance": {"state": "close"}})
+    monkeypatch.setattr(evolution_module, "PooledHTTPClient", lambda **_kwargs: http)
+    client = EvolutionClient(
+        base_url="https://evolution.example.test",
+        api_key="evolution-key",
+        instance="recall-sales",
+    )
+
+    async with client:
+        await client.connect()
+
+    assert http.calls[0]["path"] == "/instance/connect/recall-sales"
+
+
+@pytest.mark.anyio
+async def test_evolution_can_point_the_webhook_at_another_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Al dar de alta un numero hay que configurarle su webhook, no el del cliente."""
+    http = StubHTTPClient({"webhook": {"enabled": True}})
+    monkeypatch.setattr(evolution_module, "PooledHTTPClient", lambda **_kwargs: http)
+    client = EvolutionClient(
+        base_url="https://evolution.example.test",
+        api_key="evolution-key",
+        instance="recall-sales",
+    )
+
+    async with client:
+        await client.set_webhook("https://mi-app.test/hook", instance_name="linea-ventas")
+
+    assert http.calls[0]["path"] == "/webhook/set/linea-ventas"
+
+
+@pytest.mark.anyio
+async def test_evolution_client_manages_instances(monkeypatch: pytest.MonkeyPatch) -> None:
+    from wa_providers.capabilities import InstanceManager
+
+    monkeypatch.setattr(
+        evolution_module,
+        "PooledHTTPClient",
+        lambda **_kwargs: StubHTTPClient({}),
+    )
+    client = EvolutionClient(
+        base_url="https://evolution.example.test",
+        api_key="evolution-key",
+        instance="recall-sales",
+    )
+
+    async with client:
+        assert isinstance(client, InstanceManager)
