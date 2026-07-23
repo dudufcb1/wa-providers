@@ -15,6 +15,7 @@ from .base import BaseProvider
 from .exceptions import ProviderTransportError
 from .http import PooledHTTPClient
 from .schemas import (
+    InstanceProfile,
     MediaDownload,
     SendResult,
     Template,
@@ -484,6 +485,27 @@ class CloudAPIClient(BaseProvider):
     async def mark_read(self, message_id: str) -> dict[str, Any]:
         payload = {"messaging_product": "whatsapp", "status": "read", "message_id": message_id}
         return await self._http.request("POST", self._messages_path, retry=True, json=payload)
+
+    async def fetch_profile(self, phone_number_id: str | None = None) -> InstanceProfile:
+        """Telefono y nombre verificado del numero, para mostrarlos en pantalla.
+
+        Es el equivalente del `fetch_profile` de Evolution: deja enseñar el numero
+        real en vez del identificador interno. De paso sirve para comprobar que el
+        token funciona y que el numero existe, que es lo que se necesita al darlo
+        de alta."""
+        target = _required_text(phone_number_id or self.phone_number_id, "phone_number_id")
+        data = await self._http.request(
+            "GET",
+            f"/{target}",
+            retry=True,
+            params={"fields": "display_phone_number,verified_name"},
+        )
+        phone = data.get("display_phone_number")
+        name = data.get("verified_name")
+        return InstanceProfile(
+            phone=phone if isinstance(phone, str) and phone else None,
+            profile_name=name if isinstance(name, str) and name else None,
+        )
 
     async def health(self) -> dict[str, Any]:
         """health_status del numero: el mejor diagnostico cuando algo no llega."""

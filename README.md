@@ -148,6 +148,8 @@ solo existen en un proveedor se exponen mediante Protocols comprobables en runti
   `GenericMediaSender`, `CloudMediaDownloader`, `ReadMarker` y `HealthChecker`.
 - Evolution: `GenericMediaSender`, `VoiceNoteSender`, `EvolutionMediaDownloader`,
   `WebhookConfigurator` e `InstanceManager`.
+- Los dos: `TextSender` y `ProfileReader` (`fetch_profile`, para saber con qué
+  número se presenta cada uno).
 
 ```python
 from wa_providers import InteractiveSender
@@ -225,7 +227,7 @@ normalizados) funciona igual en ambos. Lo específico vive en cada cliente:
 | Alta de números por API | no (se dan de alta en Meta) | sí (`InstanceManager`, QR) |
 | Media generica | sí (`send_media`, por tipo real) | sí (`send_media`) |
 | Nota de voz (PTT) | no distinguida | sí (`send_whatsapp_audio`) |
-| Perfil del número vinculado | no aplica | sí (`fetch_profile`) |
+| Perfil del número | sí (`fetch_profile`, nombre verificado) | sí (`fetch_profile`) |
 | Descarga de media | bytes (`get_media`) | base64 (`get_media_base64`) |
 | Texto libre cuando quieras | solo dentro de 24h | sí |
 

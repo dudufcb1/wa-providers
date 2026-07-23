@@ -10,6 +10,7 @@ from .capabilities import (
     HealthChecker,
     InstanceManager,
     InteractiveSender,
+    ProfileReader,
     ReadMarker,
     TemplateCatalog,
     TemplateSender,
@@ -43,7 +44,7 @@ from .webhook import (
     verify_cloudapi_signature,
 )
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 __all__ = [
     "BaseProvider",
@@ -59,6 +60,7 @@ __all__ = [
     "InteractiveSender",
     "MediaContent",
     "MediaDownload",
+    "ProfileReader",
     "ReadMarker",
     "Template",
     "TemplateCatalog",

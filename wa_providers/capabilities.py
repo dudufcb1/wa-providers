@@ -92,6 +92,19 @@ class GenericMediaSender(Protocol):
 
 
 @runtime_checkable
+class ProfileReader(Protocol):
+    """Lectura del telefono y el nombre con el que se presenta un numero.
+
+    Lo implementan los dos motores, cada uno con su identificador: el nombre de
+    la instancia en Evolution y el `phone_number_id` en Cloud API.
+    """
+
+    # Posicional a proposito (`/`): cada motor nombra distinto lo que identifica al
+    # numero, y aqui lo unico que importa es que se pueda pedir sin argumentos.
+    async def fetch_profile(self, target: str | None = None, /) -> InstanceProfile: ...
+
+
+@runtime_checkable
 class VoiceNoteSender(Protocol):
     """Nota de voz (PTT), que se reproduce con su onda en vez de bajarse como archivo.
 

@@ -14,6 +14,7 @@ from wa_providers.capabilities import (
     GenericMediaSender,
     HealthChecker,
     InteractiveSender,
+    ProfileReader,
     ReadMarker,
     TemplateCatalog,
     TemplateSender,
@@ -1329,3 +1330,55 @@ async def test_cloudapi_send_media_rejects_unknown_media_type(
         assert http.calls == []
     finally:
         await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cloudapi_fetch_profile_reads_the_verified_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Devuelve el teléfono y el nombre verificado del número oficial.
+
+    Sirve para dos cosas: enseñar el número real en pantalla en vez del
+    phone_number_id, y comprobar al darlo de alta que el token funciona."""
+    http = StubHTTPClient(
+        {"display_phone_number": "+1 555-062-8660", "verified_name": "Test Number"}
+    )
+    monkeypatch.setattr(cloudapi_module, "PooledHTTPClient", lambda **_kwargs: http)
+    client = CloudAPIClient(token="cloud-token", phone_number_id="phone-number-id-1")
+
+    try:
+        profile = await client.fetch_profile()
+
+        assert http.calls == [
+            {
+                "method": "GET",
+                "path": "/phone-number-id-1",
+                "retry": True,
+                "params": {"fields": "display_phone_number,verified_name"},
+            }
+        ]
+        assert profile.phone == "+1 555-062-8660"
+        assert profile.profile_name == "Test Number"
+        assert isinstance(client, ProfileReader)
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_both_engines_can_read_a_profile() -> None:
+    """Los dos motores saben decir con qué número se presentan.
+
+    Es lo que deja al consumidor pintar la misma pantalla sin preguntar cuál
+    motor tiene debajo."""
+    cloud = CloudAPIClient(token="cloud-token", phone_number_id="phone-number-id-1")
+    evolution = EvolutionClient(
+        base_url="https://evolution.example.test",
+        api_key="evolution-key",
+        instance="recall-sales",
+    )
+    try:
+        assert isinstance(cloud, ProfileReader)
+        assert isinstance(evolution, ProfileReader)
+    finally:
+        await cloud.aclose()
+        await evolution.aclose()
