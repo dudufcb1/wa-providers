@@ -119,7 +119,7 @@ def parse_cloudapi(payload: dict[str, Any]) -> tuple[list[InboundMessage], list[
                     )
                 )
             for s in value.get("statuses", []) or []:
-                statuses.append(_cloud_status(s))
+                statuses.append(_cloud_status(s, channel))
     return messages, statuses
 
 
@@ -214,10 +214,11 @@ def _cloud_message(
     )
 
 
-def _cloud_status(s: dict[str, Any]) -> StatusUpdate:
+def _cloud_status(s: dict[str, Any], channel: str = "") -> StatusUpdate:
     errors = s.get("errors") or []
     return StatusUpdate(
         provider="cloudapi",
+        channel_number=channel,
         message_id=s.get("id", ""),
         status=_dstatus(s.get("status")),
         recipient=s.get("recipient_id"),
@@ -489,6 +490,7 @@ def parse_evolution_status(payload: dict[str, Any]) -> list[StatusUpdate]:
         statuses.append(
             StatusUpdate(
                 provider="evolution",
+                channel_number=_string(payload.get("instance")) or "",
                 message_id=message_id,
                 status=_EVOLUTION_DELIVERY_STATUSES.get(
                     raw_status,

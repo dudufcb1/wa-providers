@@ -166,6 +166,10 @@ class StatusUpdate(BaseModel):
     """Actualizacion de estado de entrega ya normalizada."""
 
     provider: str
+    # El numero del negocio por el que salio el mensaje (phone_number_id en Cloud
+    # API, instancia en Evolution). Sin el, un sistema con varios numeros no sabe
+    # de cual es el acuse.
+    channel_number: str = ""
     message_id: str
     status: DeliveryStatus = DeliveryStatus.UNKNOWN
     recipient: str | None = None

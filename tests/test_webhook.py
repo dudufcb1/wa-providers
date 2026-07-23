@@ -892,3 +892,47 @@ def test_parse_evolution_normalizes_interactive_replies(
     assert inbound.type is MessageType.INTERACTIVE
     assert inbound.interactive == expected
     assert inbound.text == expected.title
+
+
+def test_status_updates_say_which_business_number_they_belong_to() -> None:
+    """El acuse dice por que numero del negocio salio el mensaje.
+
+    Meta manda un solo webhook para toda la app y Evolution puede tener varias
+    instancias en el mismo servidor: sin ese dato, un sistema con varios numeros
+    no sabe a que cuenta pertenece el acuse."""
+    cloud_payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "metadata": {"phone_number_id": "phone-number-id-1"},
+                            "statuses": [
+                                {
+                                    "id": "wamid.abc",
+                                    "status": "delivered",
+                                    "recipient_id": "5215550000001",
+                                    "timestamp": "1700000000",
+                                }
+                            ],
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    _messages, statuses = parse_cloudapi(cloud_payload)
+
+    assert statuses[0].channel_number == "phone-number-id-1"
+    assert statuses[0].status is DeliveryStatus.DELIVERED
+
+    evolution_statuses = parse_evolution_status(
+        {
+            "event": "messages.update",
+            "instance": "ghl-loc-1",
+            "data": {"keyId": "evo-1", "status": "DELIVERY_ACK"},
+        }
+    )
+
+    assert evolution_statuses[0].channel_number == "ghl-loc-1"
