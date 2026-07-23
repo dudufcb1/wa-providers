@@ -415,7 +415,8 @@ async def test_clients_expose_provider_capabilities() -> None:
         assert isinstance(cloud, CloudMediaDownloader)
         assert isinstance(cloud, ReadMarker)
         assert isinstance(cloud, HealthChecker)
-        assert not isinstance(cloud, GenericMediaSender)
+        # Ambos motores mandan media generica, pero cada uno con su transporte.
+        assert isinstance(cloud, GenericMediaSender)
         assert not isinstance(cloud, WebhookConfigurator)
         assert isinstance(evolution, TextSender)
         assert isinstance(evolution, GenericMediaSender)
@@ -1238,5 +1239,93 @@ async def test_evolution_send_whatsapp_audio_uses_its_own_endpoint(
         assert result.message_id == "evo-audio-1"
         assert result.accepted is True
         assert isinstance(client, VoiceNoteSender)
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cloudapi_send_media_uses_the_real_type_and_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Una imagen sale como imagen (con su pie), no como documento adjunto.
+
+    Es la diferencia entre que se vea en el chat o que llegue como un archivo que
+    hay que descargar."""
+    http = StubHTTPClient({"messages": [{"id": "wamid.media-1"}]})
+    monkeypatch.setattr(cloudapi_module, "PooledHTTPClient", lambda **_kwargs: http)
+    client = CloudAPIClient(token="cloud-token", phone_number_id="phone-number-id-1")
+
+    try:
+        await client.send_media(
+            "5215550000001",
+            "https://cdn.example.test/foto.jpg",
+            media_type="image",
+            caption="Aquí está",
+        )
+
+        assert http.calls == [
+            {
+                "method": "POST",
+                "path": "/phone-number-id-1/messages",
+                "retry": False,
+                "json": {
+                    "messaging_product": "whatsapp",
+                    "to": "5215550000001",
+                    "type": "image",
+                    "image": {
+                        "link": "https://cdn.example.test/foto.jpg",
+                        "caption": "Aquí está",
+                    },
+                },
+            }
+        ]
+        assert isinstance(client, GenericMediaSender)
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cloudapi_send_media_drops_caption_where_meta_ignores_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """El audio no lleva pie de foto y se manda por id cuando no es una URL.
+
+    Meta rechaza el caption en audio; mandarlo igual haría fallar el envío entero
+    en vez de perder solo el texto."""
+    http = StubHTTPClient({"messages": [{"id": "wamid.media-2"}]})
+    monkeypatch.setattr(cloudapi_module, "PooledHTTPClient", lambda **_kwargs: http)
+    client = CloudAPIClient(token="cloud-token", phone_number_id="phone-number-id-1")
+
+    try:
+        await client.send_media(
+            "5215550000001",
+            "media-id-subido-a-meta",
+            media_type="audio",
+            caption="se ignora",
+        )
+
+        assert http.calls[0]["json"] == {
+            "messaging_product": "whatsapp",
+            "to": "5215550000001",
+            "type": "audio",
+            "audio": {"id": "media-id-subido-a-meta"},
+        }
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cloudapi_send_media_rejects_unknown_media_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Un tipo que Meta no acepta falla antes de la llamada, no con un 400 suyo."""
+    http = StubHTTPClient({})
+    monkeypatch.setattr(cloudapi_module, "PooledHTTPClient", lambda **_kwargs: http)
+    client = CloudAPIClient(token="cloud-token", phone_number_id="phone-number-id-1")
+
+    try:
+        with pytest.raises(ValueError, match="media_type invalido"):
+            await client.send_media("5215550000001", "https://x.test/a.bin", media_type="planilla")
+        assert http.calls == []
     finally:
         await client.aclose()

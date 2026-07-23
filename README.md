@@ -145,7 +145,7 @@ El contrato comun se mantiene en `send_text` y `send_document`. Las funciones qu
 solo existen en un proveedor se exponen mediante Protocols comprobables en runtime:
 
 - Cloud API: `TemplateSender`, `TemplateCatalog`, `InteractiveSender`,
-  `CloudMediaDownloader`, `ReadMarker` y `HealthChecker`.
+  `GenericMediaSender`, `CloudMediaDownloader`, `ReadMarker` y `HealthChecker`.
 - Evolution: `GenericMediaSender`, `VoiceNoteSender`, `EvolutionMediaDownloader`,
   `WebhookConfigurator` e `InstanceManager`.
 
@@ -223,7 +223,7 @@ normalizados) funciona igual en ambos. Lo específico vive en cada cliente:
 | Recibir respuesta de listas y botones | sí | sí (normalizada a `interactive`) |
 | Grupos | no | sí (`is_group`, autor en `from_number`) |
 | Alta de números por API | no (se dan de alta en Meta) | sí (`InstanceManager`, QR) |
-| Media generica | documentos | sí (`send_media`) |
+| Media generica | sí (`send_media`, por tipo real) | sí (`send_media`) |
 | Nota de voz (PTT) | no distinguida | sí (`send_whatsapp_audio`) |
 | Perfil del número vinculado | no aplica | sí (`fetch_profile`) |
 | Descarga de media | bytes (`get_media`) | base64 (`get_media_base64`) |

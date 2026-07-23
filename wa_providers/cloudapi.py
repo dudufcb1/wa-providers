@@ -44,6 +44,11 @@ INTERACTIVE_BODY_MAX = 1024
 # Tope por pagina que acepta el catalogo de plantillas de Graph API.
 TEMPLATES_PAGE_MAX = 250
 
+# Tipos de media que acepta el endpoint de mensajes, y los que ademas admiten
+# pie de foto (audio y sticker no lo llevan).
+_CLOUD_MEDIA_TYPES = frozenset({"image", "video", "document", "audio", "sticker"})
+_CLOUD_CAPTIONABLE = frozenset({"image", "video", "document"})
+
 # Marcador de variable dentro del cuerpo de una plantilla: `{{1}}` en el formato
 # posicional y `{{nombre}}` en el nombrado.
 _TEMPLATE_VARIABLE = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}")
@@ -402,6 +407,49 @@ class CloudAPIClient(BaseProvider):
                 break
             params = {**params, "after": cursor}
         return templates
+
+    async def send_media(
+        self,
+        to: str,
+        media: str,
+        media_type: str = "document",
+        mime_type: str | None = None,  # Cloud API lo deduce del archivo; se acepta por firma comun
+        filename: str | None = None,
+        caption: str | None = None,
+    ) -> SendResult:
+        """Manda media por su tipo real, para que WhatsApp la muestre como toca.
+
+        Una imagen enviada como documento llega igual, pero se ve como un archivo
+        adjunto en vez de mostrarse en el chat; por eso el tipo importa.
+
+        `media` puede ser una URL publica (se manda como `link`) o el id de un
+        archivo ya subido a Meta (se manda como `id`). El pie de foto solo lo
+        aceptan imagen, video y documento: en audio y sticker se ignora, asi que
+        el caller decide si lo manda como mensaje aparte.
+        """
+        _required_text(to, "to")
+        _required_text(media, "media")
+        _required_text(media_type, "media_type")
+        if media_type not in _CLOUD_MEDIA_TYPES:
+            raise ValueError(
+                f"media_type invalido: {media_type!r}. "
+                f"Validos: {', '.join(sorted(_CLOUD_MEDIA_TYPES))}"
+            )
+        reference = "link" if media.startswith(("http://", "https://")) else "id"
+        content: dict[str, Any] = {reference: media}
+        if filename and media_type == "document":
+            content["filename"] = filename
+        if caption and media_type in _CLOUD_CAPTIONABLE:
+            content["caption"] = caption
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": media_type,
+            media_type: content,
+        }
+        return _result(
+            await self._http.request("POST", self._messages_path, retry=False, json=payload)
+        )
 
     async def send_document(
         self,
