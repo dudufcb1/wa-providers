@@ -507,6 +507,35 @@ class CloudAPIClient(BaseProvider):
             profile_name=name if isinstance(name, str) and name else None,
         )
 
+    async def subscribe_waba_webhook(
+        self,
+        callback_url: str | None = None,
+        verify_token: str | None = None,
+        waba_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Suscribe la app a los eventos de la cuenta y, si se le da, fija su URL.
+
+        Sin `callback_url` los eventos van a la URL configurada en el panel de la
+        app. Con ella se usa un *webhook override*: esa cuenta manda sus eventos a
+        la URL indicada, y Meta la verifica en el momento con un GET de handshake
+        contra `verify_token`. Es lo que permite dar de alta la cuenta de un
+        cliente sin que nadie entre al panel de Meta a configurar nada.
+
+        Suscribirse es lo minimo para recibir: una app puede tener su URL bien
+        puesta y aun asi no recibir nada de una cuenta a la que no esta suscrita.
+        """
+        target = _required_text(waba_id or self.waba_id, "waba_id")
+        payload: dict[str, Any] = {}
+        if callback_url:
+            payload["override_callback_uri"] = callback_url
+            payload["verify_token"] = _required_text(verify_token, "verify_token")
+        return await self._http.request(
+            "POST",
+            f"/{target}/subscribed_apps",
+            retry=False,
+            json=payload or None,
+        )
+
     async def health(self) -> dict[str, Any]:
         """health_status del numero: el mejor diagnostico cuando algo no llega."""
         return await self._http.request(

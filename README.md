@@ -145,7 +145,8 @@ El contrato comun se mantiene en `send_text` y `send_document`. Las funciones qu
 solo existen en un proveedor se exponen mediante Protocols comprobables en runtime:
 
 - Cloud API: `TemplateSender`, `TemplateCatalog`, `InteractiveSender`,
-  `GenericMediaSender`, `CloudMediaDownloader`, `ReadMarker` y `HealthChecker`.
+  `GenericMediaSender`, `CloudMediaDownloader`, `ReadMarker`, `HealthChecker` y
+  `WabaWebhookSubscriber`.
 - Evolution: `GenericMediaSender`, `VoiceNoteSender`, `EvolutionMediaDownloader`,
   `WebhookConfigurator` e `InstanceManager`.
 - Los dos: `TextSender` y `ProfileReader` (`fetch_profile`, para saber con qué
@@ -225,6 +226,7 @@ normalizados) funciona igual en ambos. Lo específico vive en cada cliente:
 | Recibir respuesta de listas y botones | sí | sí (normalizada a `interactive`) |
 | Grupos | no | sí (`is_group`, autor en `from_number`) |
 | Alta de números por API | no (se dan de alta en Meta) | sí (`InstanceManager`, QR) |
+| Configurar su webhook por API | sí (`subscribe_waba_webhook`, con URL propia por cuenta) | sí (`set_webhook` por instancia) |
 | Media generica | sí (`send_media`, por tipo real) | sí (`send_media`) |
 | Nota de voz (PTT) | no distinguida | sí (`send_whatsapp_audio`) |
 | Perfil del número | sí (`fetch_profile`, nombre verificado) | sí (`fetch_profile`) |

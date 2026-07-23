@@ -20,6 +20,7 @@ from wa_providers.capabilities import (
     TemplateSender,
     TextSender,
     VoiceNoteSender,
+    WabaWebhookSubscriber,
     WebhookConfigurator,
 )
 from wa_providers.http import BinaryResponse
@@ -1382,3 +1383,90 @@ async def test_both_engines_can_read_a_profile() -> None:
     finally:
         await cloud.aclose()
         await evolution.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cloudapi_subscribes_the_waba_with_its_own_callback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Suscribe la app a la cuenta y le fija una URL propia (webhook override).
+
+    Es lo que deja dar de alta la cuenta de un cliente sin que nadie entre al
+    panel de Meta: Meta verifica la URL en el momento contra el verify token."""
+    http = StubHTTPClient({"success": True})
+    monkeypatch.setattr(cloudapi_module, "PooledHTTPClient", lambda **_kwargs: http)
+    client = CloudAPIClient(
+        token="cloud-token",
+        phone_number_id="phone-number-id-1",
+        waba_id="waba-1",
+    )
+
+    try:
+        result = await client.subscribe_waba_webhook(
+            "https://ejemplo.test/meta/webhook",
+            "token-de-verificacion",
+        )
+
+        assert http.calls == [
+            {
+                "method": "POST",
+                "path": "/waba-1/subscribed_apps",
+                "retry": False,
+                "json": {
+                    "override_callback_uri": "https://ejemplo.test/meta/webhook",
+                    "verify_token": "token-de-verificacion",
+                },
+            }
+        ]
+        assert result == {"success": True}
+        assert isinstance(client, WabaWebhookSubscriber)
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cloudapi_can_subscribe_without_overriding_the_callback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sin URL propia solo se suscribe: los eventos van a la URL del panel de la app.
+
+    Suscribirse es lo mínimo para recibir; una app con su URL bien puesta no recibe
+    nada de una cuenta a la que no está suscrita."""
+    http = StubHTTPClient({"success": True})
+    monkeypatch.setattr(cloudapi_module, "PooledHTTPClient", lambda **_kwargs: http)
+    client = CloudAPIClient(
+        token="cloud-token",
+        phone_number_id="phone-number-id-1",
+        waba_id="waba-1",
+    )
+
+    try:
+        await client.subscribe_waba_webhook()
+
+        assert http.calls[0]["json"] is None
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cloudapi_override_requires_a_verify_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fijar una URL sin verify token falla aquí: Meta la rechazaría igual.
+
+    El handshake que Meta hace contra esa URL se comprueba con ese token; sin él
+    la verificación no puede pasar."""
+    http = StubHTTPClient({"success": True})
+    monkeypatch.setattr(cloudapi_module, "PooledHTTPClient", lambda **_kwargs: http)
+    client = CloudAPIClient(
+        token="cloud-token",
+        phone_number_id="phone-number-id-1",
+        waba_id="waba-1",
+    )
+
+    try:
+        with pytest.raises(ValueError, match="verify_token"):
+            await client.subscribe_waba_webhook("https://ejemplo.test/meta/webhook")
+        assert http.calls == []
+    finally:
+        await client.aclose()

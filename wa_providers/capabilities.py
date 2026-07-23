@@ -92,6 +92,22 @@ class GenericMediaSender(Protocol):
 
 
 @runtime_checkable
+class WabaWebhookSubscriber(Protocol):
+    """Suscripcion de la app a los eventos de una cuenta, con URL propia opcional.
+
+    Solo aplica a Cloud API: es lo que deja dar de alta la cuenta de un cliente
+    sin que nadie entre al panel de Meta a escribir la URL a mano.
+    """
+
+    async def subscribe_waba_webhook(
+        self,
+        callback_url: str | None = None,
+        verify_token: str | None = None,
+        waba_id: str | None = None,
+    ) -> dict[str, Any]: ...
+
+
+@runtime_checkable
 class ProfileReader(Protocol):
     """Lectura del telefono y el nombre con el que se presenta un numero.
 

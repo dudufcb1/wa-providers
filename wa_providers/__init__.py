@@ -16,6 +16,7 @@ from .capabilities import (
     TemplateSender,
     TextSender,
     VoiceNoteSender,
+    WabaWebhookSubscriber,
     WebhookConfigurator,
 )
 from .cloudapi import CloudAPIClient
@@ -44,7 +45,7 @@ from .webhook import (
     verify_cloudapi_signature,
 )
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 __all__ = [
     "BaseProvider",
@@ -69,6 +70,7 @@ __all__ = [
     "TemplateStatus",
     "TextSender",
     "VoiceNoteSender",
+    "WabaWebhookSubscriber",
     "WebhookConfigurator",
     "get_provider",
     "SendResult",
