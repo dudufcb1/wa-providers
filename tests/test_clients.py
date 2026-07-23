@@ -15,11 +15,14 @@ from wa_providers.capabilities import (
     HealthChecker,
     InteractiveSender,
     ReadMarker,
+    TemplateCatalog,
     TemplateSender,
     TextSender,
+    VoiceNoteSender,
     WebhookConfigurator,
 )
 from wa_providers.http import BinaryResponse
+from wa_providers.schemas import TemplateCategory, TemplateStatus
 
 
 class StubHTTPClient:
@@ -903,3 +906,337 @@ async def test_evolution_client_manages_instances(monkeypatch: pytest.MonkeyPatc
 
     async with client:
         assert isinstance(client, InstanceManager)
+
+
+class SequenceHTTPClient(StubHTTPClient):
+    """Stub que devuelve una respuesta distinta por llamada, para probar paginacion."""
+
+    def __init__(self, responses: list[dict[str, Any]]) -> None:
+        super().__init__({})
+        self.responses = responses
+
+    async def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        retry: bool | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        await super().request(method, path, retry=retry, **kwargs)
+        if not self.responses:
+            raise AssertionError("Se pidieron mas paginas de las configuradas")
+        return self.responses.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_cloudapi_list_templates_normalizes_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """El catalogo crudo de Graph API se aplana al modelo Template del paquete.
+
+    Cubre lo que necesita una pantalla para ofrecer una plantilla: su estado en
+    minusculas, su categoria, el texto del cuerpo y las variables que hay que
+    llenar antes de enviarla."""
+    http = StubHTTPClient(
+        {
+            "data": [
+                {
+                    "id": "1667192013751005",
+                    "name": "recordatorio_cita",
+                    "language": "es_MX",
+                    "status": "APPROVED",
+                    "category": "UTILITY",
+                    "components": [
+                        {"type": "HEADER", "format": "TEXT", "text": "Tu cita"},
+                        {
+                            "type": "BODY",
+                            "text": "Hola {{1}}, te esperamos el {{2}}. Gracias {{1}}.",
+                        },
+                    ],
+                }
+            ],
+            "paging": {"cursors": {"before": "MAZDZD", "after": "MjQZD"}},
+        }
+    )
+    monkeypatch.setattr(cloudapi_module, "PooledHTTPClient", lambda **_kwargs: http)
+    client = CloudAPIClient(
+        token="cloud-token",
+        phone_number_id="phone-number-id-1",
+        waba_id="waba-1",
+    )
+
+    try:
+        templates = await client.list_templates(status="APPROVED")
+
+        assert http.calls == [
+            {
+                "method": "GET",
+                "path": "/waba-1/message_templates",
+                "retry": True,
+                "params": {"limit": 100, "status": "APPROVED"},
+            }
+        ]
+        assert len(templates) == 1
+        template = templates[0]
+        assert template.provider == "cloudapi"
+        assert template.name == "recordatorio_cita"
+        assert template.language == "es_MX"
+        assert template.status is TemplateStatus.APPROVED
+        assert template.category is TemplateCategory.UTILITY
+        assert template.is_sendable is True
+        assert template.body == "Hola {{1}}, te esperamos el {{2}}. Gracias {{1}}."
+        # La variable repetida se pide una sola vez y el orden es el del envio.
+        assert template.variables == ["1", "2"]
+        assert len(template.components) == 2
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cloudapi_list_templates_follows_cursor_until_last_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Con varias paginas se sigue el cursor `after` y se para en la ultima.
+
+    Graph API manda `cursors.after` incluso en la ultima pagina; lo que dice que
+    aun hay mas es `paging.next`. Sin esa distincion el recorrido se cicla."""
+    http = SequenceHTTPClient(
+        [
+            {
+                "data": [{"name": "uno", "language": "es_MX", "status": "APPROVED"}],
+                "paging": {"cursors": {"after": "cursor-1"}, "next": "https://graph/next"},
+            },
+            {
+                "data": [{"name": "dos", "language": "es_MX", "status": "PENDING"}],
+                "paging": {"cursors": {"after": "cursor-2"}},
+            },
+        ]
+    )
+    monkeypatch.setattr(cloudapi_module, "PooledHTTPClient", lambda **_kwargs: http)
+    client = CloudAPIClient(
+        token="cloud-token",
+        phone_number_id="phone-number-id-1",
+        waba_id="waba-1",
+    )
+
+    try:
+        templates = await client.list_templates(limit=1)
+
+        assert [call["params"] for call in http.calls] == [
+            {"limit": 1},
+            {"limit": 1, "after": "cursor-1"},
+        ]
+        assert [t.name for t in templates] == ["uno", "dos"]
+        assert templates[1].status is TemplateStatus.PENDING
+        assert templates[1].is_sendable is False
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cloudapi_list_templates_survives_unknown_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Un estado que Meta agregue despues no debe tumbar la lectura del catalogo.
+
+    Cae a UNKNOWN y la plantilla se sigue listando, en vez de reventar la pantalla
+    completa por un valor nuevo."""
+    http = StubHTTPClient(
+        {"data": [{"name": "nueva", "language": "es_MX", "status": "SOMETHING_NEW"}]}
+    )
+    monkeypatch.setattr(cloudapi_module, "PooledHTTPClient", lambda **_kwargs: http)
+    client = CloudAPIClient(
+        token="cloud-token",
+        phone_number_id="phone-number-id-1",
+        waba_id="waba-1",
+    )
+
+    try:
+        templates = await client.list_templates()
+
+        assert templates[0].status is TemplateStatus.UNKNOWN
+        assert templates[0].category is TemplateCategory.UNKNOWN
+        assert templates[0].variables == []
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cloudapi_list_templates_requires_waba_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sin WABA ID no hay catalogo que consultar: falla claro y no llama a Meta.
+
+    El cliente se puede construir solo para enviar (ahi basta el phone_number_id),
+    asi que el error tiene que salir al pedir plantillas, no al construirlo."""
+    http = StubHTTPClient({})
+    monkeypatch.setattr(cloudapi_module, "PooledHTTPClient", lambda **_kwargs: http)
+    client = CloudAPIClient(token="cloud-token", phone_number_id="phone-number-id-1")
+
+    try:
+        with pytest.raises(ValueError, match="waba_id"):
+            await client.list_templates()
+        assert http.calls == []
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_only_cloudapi_exposes_the_template_catalog() -> None:
+    """El catalogo es capacidad de Cloud API; Evolution no la implementa.
+
+    En WhatsApp no oficial no hay plantillas que aprobar, asi que quien consuma
+    el paquete debe poder preguntarlo en runtime antes de ofrecer la pantalla."""
+    cloud = CloudAPIClient(
+        token="cloud-token",
+        phone_number_id="phone-number-id-1",
+        waba_id="waba-1",
+    )
+    evolution = EvolutionClient(
+        base_url="https://evolution.example.test",
+        api_key="evolution-key",
+        instance="recall-sales",
+    )
+    try:
+        assert isinstance(cloud, TemplateCatalog)
+        assert not isinstance(evolution, TemplateCatalog)
+    finally:
+        await cloud.aclose()
+        await evolution.aclose()
+
+
+def test_phone_from_jid_keeps_raw_digits_and_ignores_lid() -> None:
+    """Del JID solo se saca la parte del numero, sin normalizar y sin los @lid.
+
+    Normalizar es del consumidor (cada sistema machea con su formato); los JID
+    `@lid` son identificadores internos de WhatsApp, no telefonos."""
+    from wa_providers.evolution import _phone_from_jid
+
+    assert _phone_from_jid("5215512345678@s.whatsapp.net") == "5215512345678"
+    assert _phone_from_jid("99999999@lid") is None
+    assert _phone_from_jid("sin-arroba") is None
+    assert _phone_from_jid(None) is None
+
+
+def test_first_instance_record_handles_list_and_wrapped() -> None:
+    """fetchInstances puede venir como lista, envuelto en {'instance':...} o plano.
+
+    La forma cambia entre versiones de Evolution, asi que la lectura no puede
+    asumir una sola."""
+    from wa_providers.evolution import _first_instance_record
+
+    assert _first_instance_record([{"ownerJid": "x"}]) == {"ownerJid": "x"}
+    assert _first_instance_record({"instance": {"ownerJid": "y"}}) == {"ownerJid": "y"}
+    assert _first_instance_record({"ownerJid": "z"}) == {"ownerJid": "z"}
+    assert _first_instance_record("nope") is None
+
+
+@pytest.mark.asyncio
+async def test_evolution_fetch_profile_reads_owner_and_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Devuelve el numero y el nombre de perfil de la instancia ya vinculada.
+
+    Es lo que deja mostrar '5215512345678 - Ventas' en vez del nombre interno de
+    la instancia."""
+    import json
+
+    body = json.dumps(
+        [{"ownerJid": "5215512345678@s.whatsapp.net", "profileName": "Ventas"}]
+    ).encode()
+    http = StubHTTPClient(
+        {},
+        binary_response=BinaryResponse(content=body, headers=httpx.Headers({})),
+    )
+    monkeypatch.setattr(evolution_module, "PooledHTTPClient", lambda **_kwargs: http)
+    client = EvolutionClient(
+        base_url="https://evolution.example.test",
+        api_key="evolution-key",
+        instance="ghl-x",
+    )
+
+    try:
+        profile = await client.fetch_profile("ghl-x")
+
+        assert http.calls == [
+            {
+                "method": "GET",
+                "path": "/instance/fetchInstances",
+                "retry": True,
+                "binary": True,
+                "params": {"instanceName": "ghl-x"},
+            }
+        ]
+        assert profile.phone == "5215512345678"
+        assert profile.profile_name == "Ventas"
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_evolution_fetch_profile_survives_unreadable_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Un cuerpo que no es JSON deja el perfil vacio en vez de reventar.
+
+    El perfil es cosmetico: si no se puede leer, la instancia sigue sirviendo y
+    la pantalla cae al nombre interno."""
+    http = StubHTTPClient(
+        {},
+        binary_response=BinaryResponse(content=b"<html>502</html>", headers=httpx.Headers({})),
+    )
+    monkeypatch.setattr(evolution_module, "PooledHTTPClient", lambda **_kwargs: http)
+    client = EvolutionClient(
+        base_url="https://evolution.example.test",
+        api_key="evolution-key",
+        instance="ghl-x",
+    )
+
+    try:
+        profile = await client.fetch_profile()
+
+        assert profile.phone is None
+        assert profile.profile_name is None
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_evolution_send_whatsapp_audio_uses_its_own_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """La nota de voz va por /message/sendWhatsAppAudio y no se reintenta.
+
+    Por sendMedia con mediatype audio saldria como archivo adjunto en vez de nota
+    de voz; y como es un envio, un reintento duplicaria el mensaje."""
+    http = StubHTTPClient({"key": {"id": "evo-audio-1"}})
+    monkeypatch.setattr(evolution_module, "PooledHTTPClient", lambda **_kwargs: http)
+    client = EvolutionClient(
+        base_url="https://evolution.example.test",
+        api_key="evolution-key",
+        instance="recall-sales",
+    )
+
+    try:
+        result = await client.send_whatsapp_audio(
+            "5215550000001",
+            "https://cdn.example.test/nota.ogg",
+        )
+
+        assert http.calls == [
+            {
+                "method": "POST",
+                "path": "/message/sendWhatsAppAudio/recall-sales",
+                "retry": False,
+                "json": {
+                    "number": "5215550000001",
+                    "audio": "https://cdn.example.test/nota.ogg",
+                },
+            }
+        ]
+        assert result.message_id == "evo-audio-1"
+        assert result.accepted is True
+        assert isinstance(client, VoiceNoteSender)
+    finally:
+        await client.aclose()

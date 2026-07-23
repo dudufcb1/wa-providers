@@ -7,12 +7,20 @@ Analogia con Evolution: base_url = graph.facebook.com; "instancia" = phone_numbe
 from __future__ import annotations
 
 import logging
-from typing import Any
+import re
+from enum import Enum
+from typing import Any, TypeVar
 
 from .base import BaseProvider
 from .exceptions import ProviderTransportError
 from .http import PooledHTTPClient
-from .schemas import MediaDownload, SendResult
+from .schemas import (
+    MediaDownload,
+    SendResult,
+    Template,
+    TemplateCategory,
+    TemplateStatus,
+)
 
 _POOL_KEYS = (
     "timeout",
@@ -33,7 +41,17 @@ BUTTON_TITLE_MAX = 20
 HEADER_MAX = 60
 INTERACTIVE_BODY_MAX = 1024
 
+# Tope por pagina que acepta el catalogo de plantillas de Graph API.
+TEMPLATES_PAGE_MAX = 250
+
+# Marcador de variable dentro del cuerpo de una plantilla: `{{1}}` en el formato
+# posicional y `{{nombre}}` en el nombrado.
+_TEMPLATE_VARIABLE = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}")
+
 logger = logging.getLogger(__name__)
+
+# Enum de este paquete cuyo valor es la version en minusculas de lo que manda Meta.
+_WireEnum = TypeVar("_WireEnum", bound=Enum)
 
 
 def _required_text(value: str | None, field: str) -> str:
@@ -58,6 +76,84 @@ def _identifier(value: str | None, field: str, limit: int) -> str:
     return identifier
 
 
+def _enum_from_wire(raw: Any, enum: type[_WireEnum], fallback: _WireEnum) -> _WireEnum:
+    """Traduce el valor de Meta (`"APPROVED"`) al enum del paquete (`"approved"`).
+
+    Un estado o una categoria que Meta agregue despues no debe reventar la
+    lectura del catalogo: cae al fallback y la plantilla se sigue listando.
+    """
+    if not isinstance(raw, str):
+        return fallback
+    try:
+        return enum(raw.strip().lower())
+    except ValueError:
+        return fallback
+
+
+def _template_body(components: list[dict[str, Any]]) -> tuple[str | None, list[str]]:
+    """Saca el texto del componente BODY y los marcadores de variable que trae.
+
+    Los marcadores se devuelven en orden de aparicion y sin repetir: es el orden
+    en el que Meta espera los parametros al enviar la plantilla.
+    """
+    for component in components:
+        if not isinstance(component, dict):
+            continue
+        if str(component.get("type", "")).upper() != "BODY":
+            continue
+        text = component.get("text")
+        if not isinstance(text, str):
+            return None, []
+        seen: list[str] = []
+        for match in _TEMPLATE_VARIABLE.finditer(text):
+            name = match.group(1)
+            if name not in seen:
+                seen.append(name)
+        return text, seen
+    return None, []
+
+
+def _next_cursor(data: dict[str, Any]) -> str | None:
+    """Cursor de la siguiente pagina del catalogo, o None si ya no hay mas.
+
+    Graph API manda `paging.next` (URL completa) solo mientras queden paginas, y
+    `paging.cursors.after` incluso en la ultima. Seguir `after` sin mirar `next`
+    haria un ciclo infinito pidiendo la misma pagina final una y otra vez.
+    """
+    paging = data.get("paging")
+    if not isinstance(paging, dict) or not paging.get("next"):
+        return None
+    cursors = paging.get("cursors")
+    if not isinstance(cursors, dict):
+        return None
+    after = cursors.get("after")
+    return after if isinstance(after, str) and after else None
+
+
+def _template(record: dict[str, Any]) -> Template:
+    """Normaliza un nodo del catalogo de Graph API al modelo del paquete."""
+    raw_components = record.get("components")
+    components: list[dict[str, Any]] = []
+    if isinstance(raw_components, list):
+        components = [c for c in raw_components if isinstance(c, dict)]
+    body, variables = _template_body(components)
+    template_id = record.get("id")
+    return Template(
+        provider="cloudapi",
+        id=template_id if isinstance(template_id, str) else None,
+        name=str(record.get("name") or ""),
+        language=str(record.get("language") or ""),
+        status=_enum_from_wire(record.get("status"), TemplateStatus, TemplateStatus.UNKNOWN),
+        category=_enum_from_wire(
+            record.get("category"), TemplateCategory, TemplateCategory.UNKNOWN
+        ),
+        body=body,
+        variables=variables,
+        components=components,
+        raw=record,
+    )
+
+
 def _result(data: dict[str, Any]) -> SendResult:
     msg = (data.get("messages") or [{}])[0]
     return SendResult(
@@ -76,10 +172,15 @@ class CloudAPIClient(BaseProvider):
         token: str,
         phone_number_id: str,
         graph_version: str = "v21.0",
+        waba_id: str | None = None,
         **pool: Any,
     ) -> None:
         self._token = token
         self.phone_number_id = phone_number_id
+        # El catalogo de plantillas cuelga de la cuenta (WABA), no del numero, y
+        # Meta no lo deriva de uno al otro: quien quiera leerlo tiene que darlo.
+        # Enviar mensajes no lo necesita, por eso es opcional.
+        self.waba_id = waba_id
         http = PooledHTTPClient(
             base_url=f"https://graph.facebook.com/{graph_version}",
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
@@ -256,6 +357,51 @@ class CloudAPIClient(BaseProvider):
         return _result(
             await self._http.request("POST", self._messages_path, retry=False, json=payload)
         )
+
+    async def list_templates(
+        self,
+        *,
+        status: str | None = None,
+        language: str | None = None,
+        limit: int = 100,
+        max_pages: int = 10,
+    ) -> list[Template]:
+        """Catalogo de plantillas de la cuenta (WABA), ya normalizado.
+
+        Es de solo lectura y necesita el permiso `whatsapp_business_management`,
+        distinto del `whatsapp_business_messaging` con el que se envia; el token
+        de sistema del alta suele traer los dos.
+
+        `status` y `language` filtran del lado de Meta (p.ej. `status="APPROVED"`
+        para quedarte solo con las enviables). El catalogo viene paginado por
+        cursor: se siguen las paginas hasta `max_pages`, que existe para que una
+        cuenta con cientos de plantillas no deje la peticion colgada.
+        """
+        waba_id = _required_text(self.waba_id, "waba_id")
+        page_size = max(1, min(limit, TEMPLATES_PAGE_MAX))
+        params: dict[str, Any] = {"limit": page_size}
+        if status:
+            params["status"] = status
+        if language:
+            params["language"] = language
+
+        templates: list[Template] = []
+        for _page in range(max(1, max_pages)):
+            data = await self._http.request(
+                "GET",
+                f"/{waba_id}/message_templates",
+                retry=True,
+                params=params,
+            )
+            records = data.get("data")
+            if not isinstance(records, list):
+                break
+            templates.extend(_template(r) for r in records if isinstance(r, dict))
+            cursor = _next_cursor(data)
+            if cursor is None or not records:
+                break
+            params = {**params, "after": cursor}
+        return templates
 
     async def send_document(
         self,

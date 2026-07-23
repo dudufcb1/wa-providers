@@ -11,8 +11,10 @@ from .capabilities import (
     InstanceManager,
     InteractiveSender,
     ReadMarker,
+    TemplateCatalog,
     TemplateSender,
     TextSender,
+    VoiceNoteSender,
     WebhookConfigurator,
 )
 from .cloudapi import CloudAPIClient
@@ -22,12 +24,16 @@ from .factory import get_provider
 from .schemas import (
     DeliveryStatus,
     InboundMessage,
+    InstanceProfile,
     InteractiveContent,
     MediaContent,
     MediaDownload,
     MessageType,
     SendResult,
     StatusUpdate,
+    Template,
+    TemplateCategory,
+    TemplateStatus,
 )
 from .webhook import (
     parse_cloudapi,
@@ -37,7 +43,7 @@ from .webhook import (
     verify_cloudapi_signature,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "BaseProvider",
@@ -48,13 +54,19 @@ __all__ = [
     "GenericMediaSender",
     "HealthChecker",
     "InstanceManager",
+    "InstanceProfile",
     "InteractiveContent",
     "InteractiveSender",
     "MediaContent",
     "MediaDownload",
     "ReadMarker",
+    "Template",
+    "TemplateCatalog",
+    "TemplateCategory",
     "TemplateSender",
+    "TemplateStatus",
     "TextSender",
+    "VoiceNoteSender",
     "WebhookConfigurator",
     "get_provider",
     "SendResult",

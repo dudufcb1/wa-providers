@@ -4,7 +4,8 @@ Es la piecita que hace el "cambia de proveedor con una linea". El resto de la ap
 llama a get_provider(config) y usa la interfaz comun, sin saber cual motor es.
 
 Config esperado:
-  {"provider": "cloudapi", "token": "...", "phone_number_id": "...", "graph_version": "v21.0"}
+  {"provider": "cloudapi", "token": "...", "phone_number_id": "...", "graph_version": "v21.0",
+   "waba_id": "..."}   # waba_id solo hace falta para leer el catalogo de plantillas
   {"provider": "evolution", "base_url": "...", "api_key": "...", "instance": "..."}
 
 Opcionales de pool en cualquiera: timeout, max_connections, max_keepalive,
@@ -38,6 +39,7 @@ def get_provider(config: dict[str, Any]) -> BaseProvider:
             token=config["token"],
             phone_number_id=config["phone_number_id"],
             graph_version=config.get("graph_version", "v21.0"),
+            waba_id=config.get("waba_id"),
             **pool,
         )
     if name == "evolution":

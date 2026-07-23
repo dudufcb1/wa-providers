@@ -62,6 +62,30 @@ Iniciar fuera de la ventana de 24h (solo Cloud API): `send_template(...)`.
 await wa.send_template("5215512345678", "mi_plantilla", lang="es_MX", body_params=["Eduardo"])
 ```
 
+Para saber **qué plantillas** hay aprobadas antes de mandar una, `list_templates(...)`
+(solo Cloud API). Cuelga de la cuenta (WABA), no del número, así que el cliente se
+construye con `waba_id`, y el token necesita el permiso `whatsapp_business_management`
+(distinto del `whatsapp_business_messaging` con el que se envía; el token de sistema
+del alta suele traer los dos).
+
+```python
+config = {
+    "provider": "cloudapi",
+    "token": "EAAG...",
+    "phone_number_id": "1234567890",
+    "waba_id": "9876543210",
+}
+async with get_provider(config) as wa:
+    for t in await wa.list_templates(status="APPROVED"):
+        print(t.name, t.language, t.category.value, t.variables)
+        # -> recordatorio_cita es_MX utility ['1', '2']
+```
+
+Cada `Template` trae el texto del cuerpo y `variables` con los marcadores en el
+orden en que Meta espera los parámetros, que es justo lo que necesita una pantalla
+para pedirlos. El catálogo viene paginado por cursor; el recorrido se detiene en la
+última página o al llegar a `max_pages`.
+
 ## Recibir (webhook, framework-agnóstico)
 
 La **ruta** la pone tu app; el paquete solo parsea/verifica.
@@ -120,9 +144,9 @@ descarta.
 El contrato comun se mantiene en `send_text` y `send_document`. Las funciones que
 solo existen en un proveedor se exponen mediante Protocols comprobables en runtime:
 
-- Cloud API: `TemplateSender`, `InteractiveSender`, `CloudMediaDownloader`,
-  `ReadMarker` y `HealthChecker`.
-- Evolution: `GenericMediaSender`, `EvolutionMediaDownloader`,
+- Cloud API: `TemplateSender`, `TemplateCatalog`, `InteractiveSender`,
+  `CloudMediaDownloader`, `ReadMarker` y `HealthChecker`.
+- Evolution: `GenericMediaSender`, `VoiceNoteSender`, `EvolutionMediaDownloader`,
   `WebhookConfigurator` e `InstanceManager`.
 
 ```python
@@ -194,11 +218,14 @@ normalizados) funciona igual en ambos. Lo específico vive en cada cliente:
 | | Cloud API (WABA) | Evolution |
 |---|---|---|
 | Plantillas / ventana 24h | sí (`send_template`) | no |
+| Catálogo de plantillas | sí (`list_templates`, requiere `waba_id`) | no |
 | Enviar listas y botones | sí (`send_list`, `send_buttons`) | no |
 | Recibir respuesta de listas y botones | sí | sí (normalizada a `interactive`) |
 | Grupos | no | sí (`is_group`, autor en `from_number`) |
 | Alta de números por API | no (se dan de alta en Meta) | sí (`InstanceManager`, QR) |
 | Media generica | documentos | sí (`send_media`) |
+| Nota de voz (PTT) | no distinguida | sí (`send_whatsapp_audio`) |
+| Perfil del número vinculado | no aplica | sí (`fetch_profile`) |
 | Descarga de media | bytes (`get_media`) | base64 (`get_media_base64`) |
 | Texto libre cuando quieras | solo dentro de 24h | sí |
 

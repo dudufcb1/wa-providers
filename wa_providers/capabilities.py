@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
-from .schemas import MediaDownload, SendResult
+from .schemas import InstanceProfile, MediaDownload, SendResult, Template
 
 
 @runtime_checkable
@@ -22,6 +22,25 @@ class TemplateSender(Protocol):
         body_params: list[Any] | None = None,
         components: list[dict[str, Any]] | None = None,
     ) -> SendResult: ...
+
+
+@runtime_checkable
+class TemplateCatalog(Protocol):
+    """Lectura del catalogo de plantillas de la cuenta.
+
+    Solo aplica a los motores donde las plantillas son un asset del proveedor
+    (Cloud API). Evolution no la implementa: al mandar por WhatsApp no oficial no
+    hay plantillas que aprobar ni catalogo que consultar.
+    """
+
+    async def list_templates(
+        self,
+        *,
+        status: str | None = None,
+        language: str | None = None,
+        limit: int = 100,
+        max_pages: int = 10,
+    ) -> list[Template]: ...
 
 
 @runtime_checkable
@@ -73,6 +92,16 @@ class GenericMediaSender(Protocol):
 
 
 @runtime_checkable
+class VoiceNoteSender(Protocol):
+    """Nota de voz (PTT), que se reproduce con su onda en vez de bajarse como archivo.
+
+    Es un envio aparte porque no todos los motores lo distinguen del audio comun.
+    """
+
+    async def send_whatsapp_audio(self, to: str, audio: str) -> SendResult: ...
+
+
+@runtime_checkable
 class EvolutionMediaDownloader(Protocol):
     async def get_media_base64(
         self,
@@ -103,6 +132,8 @@ class InstanceManager(Protocol):
     async def logout_instance(self, instance_name: str | None = None) -> dict[str, Any]: ...
 
     async def delete_instance(self, instance_name: str | None = None) -> dict[str, Any]: ...
+
+    async def fetch_profile(self, instance_name: str | None = None) -> InstanceProfile: ...
 
 
 @runtime_checkable

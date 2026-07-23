@@ -7,12 +7,13 @@ version de Evolution si difiere (aqui: v2).
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from .base import BaseProvider
 from .exceptions import ProviderTransportError
 from .http import PooledHTTPClient
-from .schemas import MediaDownload, SendResult
+from .schemas import InstanceProfile, MediaDownload, SendResult
 
 _POOL_KEYS = (
     "timeout",
@@ -35,8 +36,32 @@ def _required_text(value: str | None, field: str) -> str:
     return value
 
 
+def _first_instance_record(data: Any) -> dict[str, Any] | None:
+    """Saca el objeto de la instancia, venga como lista o envuelto en {"instance": ...}."""
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict):
+                inner = item.get("instance")
+                return inner if isinstance(inner, dict) else item
+        return None
+    if isinstance(data, dict):
+        inner = data.get("instance")
+        return inner if isinstance(inner, dict) else data
+    return None
+
+
+def _phone_from_jid(jid: Any) -> str | None:
+    """De '5215512345678@s.whatsapp.net' saca '5215512345678'. Ignora @lid (no es numero)."""
+    if not isinstance(jid, str) or "@" not in jid:
+        return None
+    user, _, domain = jid.partition("@")
+    if domain.endswith("lid"):
+        return None
+    return user or None
+
+
 # mediatype que acepta /message/sendMedia. Las notas de voz van por
-# /message/sendWhatsAppAudio, que este cliente todavia no expone.
+# /message/sendWhatsAppAudio, que tiene su propio metodo (send_whatsapp_audio).
 _MEDIA_TYPES = frozenset({"image", "video", "document", "audio"})
 
 
@@ -133,6 +158,27 @@ class EvolutionClient(BaseProvider):
             raw=data,
         )
 
+    async def send_whatsapp_audio(self, to: str, audio: str) -> SendResult:
+        """Manda una nota de voz (PTT): se reproduce con su onda, no es un archivo.
+
+        Evolution la separa del resto de media en `/message/sendWhatsAppAudio`; por
+        `sendMedia` con `mediatype: audio` sale como archivo de audio adjunto."""
+        _required_text(to, "to")
+        _required_text(audio, "audio")
+        data = await self._http.request(
+            "POST",
+            f"/message/sendWhatsAppAudio/{self.instance}",
+            retry=False,
+            json={"number": to, "audio": audio},
+        )
+        message_id = _evo_id(data)
+        return SendResult(
+            provider="evolution",
+            message_id=message_id,
+            accepted=message_id is not None,
+            raw=data,
+        )
+
     async def get_media_base64(
         self,
         message: dict[str, Any],
@@ -208,6 +254,33 @@ class EvolutionClient(BaseProvider):
         instance = data.get("instance")
         state = instance.get("state") if isinstance(instance, dict) else data.get("state")
         return state if isinstance(state, str) else None
+
+    async def fetch_profile(self, instance_name: str | None = None) -> InstanceProfile:
+        """Numero y nombre de perfil de la instancia ya vinculada.
+
+        Sirve para mostrar el telefono real en vez del nombre interno de la
+        instancia. `fetchInstances` puede devolver una lista o un objeto segun la
+        version, asi que se lee el cuerpo crudo en vez de asumir una forma.
+        """
+        target = _required_text(instance_name or self.instance, "instance_name")
+        raw = await self._http.request_bytes(
+            "GET",
+            "/instance/fetchInstances",
+            retry=True,
+            params={"instanceName": target},
+        )
+        try:
+            data = json.loads(raw.content or b"null")
+        except (ValueError, TypeError):
+            return InstanceProfile()
+        record = _first_instance_record(data)
+        if record is None:
+            return InstanceProfile()
+        profile = record.get("profileName")
+        return InstanceProfile(
+            phone=_phone_from_jid(record.get("ownerJid") or record.get("owner")),
+            profile_name=profile if isinstance(profile, str) and profile else None,
+        )
 
     async def logout_instance(self, instance_name: str | None = None) -> dict[str, Any]:
         """Desvincula el telefono sin borrar la instancia: se puede reconectar."""
