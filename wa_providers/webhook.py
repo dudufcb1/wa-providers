@@ -102,7 +102,18 @@ def verify_cloudapi_signature(
 
 
 def parse_cloudapi(payload: dict[str, Any]) -> tuple[list[InboundMessage], list[StatusUpdate]]:
-    """Aplana el POST del webhook de WABA a (mensajes, estados)."""
+    """Aplana el POST del webhook de WABA a (mensajes, estados).
+
+    Los ecos de la app de WhatsApp Business (coexistence) entran como mensajes con
+    `from_me`: son mensajes de la conversacion, solo que los escribio el negocio
+    desde su celular en vez de la API.
+
+    El webhook `history`, que trae los chats viejos al conectar, NO se cuela por
+    aqui: su contenido cuelga de `value.history` y no de `value.messages`, asi que
+    esta funcion lo ignora sola. Cuando haya que importarlo sera con su propio
+    parser, porque son mensajes con fecha vieja que no deben tratarse como recien
+    llegados.
+    """
     messages: list[InboundMessage] = []
     statuses: list[StatusUpdate] = []
     for entry in payload.get("entry", []) or []:
@@ -118,9 +129,23 @@ def parse_cloudapi(payload: dict[str, Any]) -> tuple[list[InboundMessage], list[
                         contact_names.get(m.get("from", "")),
                     )
                 )
+            for e in value.get("message_echoes", []) or []:
+                messages.append(_cloud_echo(e, channel))
             for s in value.get("statuses", []) or []:
                 statuses.append(_cloud_status(s, channel))
     return messages, statuses
+
+
+def _cloud_echo(m: dict[str, Any], channel: str) -> InboundMessage:
+    """Un mensaje que el negocio mando desde la app de WhatsApp Business.
+
+    Llega con la misma forma que uno entrante pero al reves: `from` es el numero del
+    negocio y `to` el del cliente. Lo que identifica a la conversacion es el
+    contacto, asi que el remitente normalizado toma el `to`, y `from_me` marca que
+    lo escribio el negocio para que del otro lado se registre como saliente.
+    """
+    echo = _cloud_message(m, channel, None)
+    return echo.model_copy(update={"from_number": _string(m.get("to")) or "", "from_me": True})
 
 
 def _cloud_contact_names(raw_contacts: Any) -> dict[str, str]:

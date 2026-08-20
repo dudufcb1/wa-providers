@@ -936,3 +936,100 @@ def test_status_updates_say_which_business_number_they_belong_to() -> None:
     )
 
     assert evolution_statuses[0].channel_number == "ghl-loc-1"
+
+
+def test_a_business_app_echo_becomes_an_outbound_message() -> None:
+    """Un mensaje que el negocio manda desde la app de WhatsApp Business (coexistence)
+    llega por `smb_message_echoes` con `from` y `to` invertidos respecto a un entrante.
+    Se normaliza como mensaje de la conversacion con el CLIENTE (`to`) y marcado
+    `from_me`, que es lo que del otro lado lo registra como saliente en vez de
+    inventar una conversacion con el propio numero del negocio."""
+    payload = {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "id": "102290129340398",
+                "changes": [
+                    {
+                        "field": "smb_message_echoes",
+                        "value": {
+                            "messaging_product": "whatsapp",
+                            "metadata": {
+                                "display_phone_number": "15550783881",
+                                "phone_number_id": "106540352242922",
+                            },
+                            "message_echoes": [
+                                {
+                                    "from": "15550783881",
+                                    "to": "16505551234",
+                                    "id": "wamid.ECO",
+                                    "timestamp": "1739321024",
+                                    "type": "text",
+                                    "text": {"body": "Ahi te va la cotizacion"},
+                                }
+                            ],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+    messages, statuses = parse_cloudapi(payload)
+
+    assert statuses == []
+    assert len(messages) == 1
+    eco = messages[0]
+    assert eco.from_me is True
+    assert eco.from_number == "16505551234"
+    assert eco.channel_number == "106540352242922"
+    assert eco.text == "Ahi te va la cotizacion"
+    assert eco.message_id == "wamid.ECO"
+
+
+def test_the_history_webhook_is_not_mistaken_for_new_messages() -> None:
+    """El webhook `history` trae los chats viejos al conectar un numero por
+    coexistence. Su contenido cuelga de `value.history`, no de `value.messages`, asi
+    que el parser lo ignora: si se colara, el CRM se llenaria de mensajes de hace
+    meses tratados como recien llegados."""
+    payload = {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "id": "102290129340398",
+                "changes": [
+                    {
+                        "field": "history",
+                        "value": {
+                            "messaging_product": "whatsapp",
+                            "metadata": {"phone_number_id": "106540352242922"},
+                            "history": [
+                                {
+                                    "metadata": {"phase": "0", "chunk_order": 1},
+                                    "threads": [
+                                        {
+                                            "id": "16505551234",
+                                            "messages": [
+                                                {
+                                                    "from": "16505551234",
+                                                    "id": "wamid.VIEJO",
+                                                    "timestamp": "1600000000",
+                                                    "type": "text",
+                                                    "text": {"body": "de hace meses"},
+                                                }
+                                            ],
+                                        }
+                                    ],
+                                }
+                            ],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+    messages, statuses = parse_cloudapi(payload)
+
+    assert messages == []
+    assert statuses == []
