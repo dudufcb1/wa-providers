@@ -45,7 +45,7 @@ from .webhook import (
     verify_cloudapi_signature,
 )
 
-__version__ = "0.8.0"
+__version__ = "0.10.0"
 
 __all__ = [
     "BaseProvider",

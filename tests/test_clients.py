@@ -424,7 +424,11 @@ async def test_clients_expose_provider_capabilities() -> None:
         assert isinstance(evolution, GenericMediaSender)
         assert isinstance(evolution, EvolutionMediaDownloader)
         assert isinstance(evolution, WebhookConfigurator)
-        assert not isinstance(evolution, InteractiveSender)
+        # Evolution tambien sabe mandar botones y listas, pero solo con una
+        # Evolution parchada: el protocolo dice que los metodos existen y
+        # `supports_interactive` dice si estan encendidos (nacen apagados).
+        assert isinstance(evolution, InteractiveSender)
+        assert evolution.supports_interactive is False
         assert not isinstance(evolution, ReadMarker)
         assert not isinstance(evolution, HealthChecker)
     finally:

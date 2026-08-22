@@ -11,8 +11,10 @@ import json
 from typing import Any
 
 from .base import BaseProvider
-from .exceptions import ProviderTransportError
+from .evolution_interactive import buttons_payload, list_payload
+from .exceptions import ProviderAPIError, ProviderTransportError
 from .http import PooledHTTPClient
+from .interactive import required_text as _required_text
 from .schemas import InstanceProfile, MediaDownload, SendResult
 
 _POOL_KEYS = (
@@ -28,12 +30,6 @@ _POOL_KEYS = (
 def _evo_id(data: dict[str, Any]) -> str | None:
     key = data.get("key")
     return key.get("id") if isinstance(key, dict) else None
-
-
-def _required_text(value: str | None, field: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{field} no puede estar vacio")
-    return value
 
 
 def _first_instance_record(data: Any) -> dict[str, Any] | None:
@@ -68,8 +64,22 @@ _MEDIA_TYPES = frozenset({"image", "video", "document", "audio"})
 class EvolutionClient(BaseProvider):
     provider_name = "evolution"
 
-    def __init__(self, base_url: str, api_key: str, instance: str, **pool: Any) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        instance: str,
+        *,
+        interactive: bool = False,
+        **pool: Any,
+    ) -> None:
         self.instance = instance
+        # Los botones y las listas piden una Evolution parchada (ver README). Una
+        # sin parchar acepta el envío y devuelve acuse, pero WhatsApp lo descarta
+        # antes de entregarlo: no hay forma de detectarlo por la respuesta. Por eso
+        # es un interruptor explícito y apagado por omisión, para que quien corra
+        # una Evolution normal no mande al vacío sin enterarse.
+        self.interactive = bool(interactive)
         http = PooledHTTPClient(
             base_url=base_url.rstrip("/"),
             headers={"apikey": api_key, "Content-Type": "application/json"},
@@ -170,6 +180,101 @@ class EvolutionClient(BaseProvider):
             f"/message/sendWhatsAppAudio/{self.instance}",
             retry=False,
             json={"number": to, "audio": audio},
+        )
+        message_id = _evo_id(data)
+        return SendResult(
+            provider="evolution",
+            message_id=message_id,
+            accepted=message_id is not None,
+            raw=data,
+        )
+
+    @property
+    def supports_interactive(self) -> bool:
+        """Si este número puede mandar botones y listas.
+
+        El que consume el cliente pregunta esto antes de ofrecer la función, en vez
+        de `isinstance(cliente, InteractiveSender)`: el protocolo solo comprueba que
+        los métodos existan, y existen siempre.
+        """
+        return self.interactive
+
+    def _require_interactive(self) -> None:
+        if not self.interactive:
+            raise ProviderAPIError(
+                "Los mensajes interactivos están apagados para esta instancia. "
+                "Requieren una Evolution parchada; enciéndelos con interactive=True."
+            )
+
+    async def send_buttons(
+        self,
+        to: str,
+        body: str,
+        buttons: list[dict[str, str]],
+        *,
+        header: str | None = None,
+        footer: str | None = None,
+    ) -> SendResult:
+        """Manda hasta tres botones debajo del mensaje.
+
+        Cada botón es un dict con `title` y, según su `type`: `reply` lleva `id`
+        (es el que regresa cuando lo pican), `url` lleva `url`, `call` lleva
+        `phone`, `copy` lleva `code` y `pix` lleva `name`, `key_type` y `key`. Sin
+        `type` se asume `reply`, que es el único que también existe en el canal
+        oficial fuera de una plantilla aprobada.
+        """
+        self._require_interactive()
+        payload = buttons_payload(to, body, buttons, header=header, footer=footer)
+        data = await self._http.request(
+            "POST",
+            f"/message/sendButtons/{self.instance}",
+            retry=False,
+            json=payload,
+        )
+        message_id = _evo_id(data)
+        return SendResult(
+            provider="evolution",
+            message_id=message_id,
+            accepted=message_id is not None,
+            raw=data,
+        )
+
+    async def send_list(
+        self,
+        to: str,
+        body: str,
+        button_label: str,
+        rows: list[dict[str, str]],
+        header: str | None = None,
+        section_title: str = "Opciones",
+        *,
+        footer: str | None = None,
+        native_flow: bool = False,
+    ) -> SendResult:
+        """Manda un menú de hasta diez opciones que se abre con un botón.
+
+        Cada fila lleva `id`, `title`, y opcionalmente `description` y `section`
+        (Evolution admite varias secciones; el contrato común solo pasa una lista
+        plana, así que la sección viaja en la propia fila).
+
+        `native_flow=True` manda la lista moderna, que solo se ve en el teléfono.
+        """
+        self._require_interactive()
+        payload = list_payload(
+            to,
+            body,
+            button_label,
+            rows,
+            header,
+            section_title,
+            footer=footer,
+            native_flow=native_flow,
+        )
+        data = await self._http.request(
+            "POST",
+            f"/message/sendList/{self.instance}",
+            retry=False,
+            json=payload,
         )
         message_id = _evo_id(data)
         return SendResult(

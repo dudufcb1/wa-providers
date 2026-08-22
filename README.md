@@ -148,7 +148,8 @@ solo existen en un proveedor se exponen mediante Protocols comprobables en runti
   `GenericMediaSender`, `CloudMediaDownloader`, `ReadMarker`, `HealthChecker` y
   `WabaWebhookSubscriber`.
 - Evolution: `GenericMediaSender`, `VoiceNoteSender`, `EvolutionMediaDownloader`,
-  `WebhookConfigurator` e `InstanceManager`.
+  `WebhookConfigurator`, `InstanceManager` e `InteractiveSender` (este último solo
+  con una Evolution parchada; ver más abajo).
 - Los dos: `TextSender` y `ProfileReader` (`fetch_profile`, para saber con qué
   número se presenta cada uno).
 
@@ -162,6 +163,42 @@ if isinstance(wa, InteractiveSender):
         [{"id": "continue", "title": "Continuar"}],
     )
 ```
+
+### Botones y listas en Evolution (opcional, apagado por omisión)
+
+Evolution también los manda, pero **una Evolution de fábrica no los entrega**: acepta
+el envío, devuelve acuse con `key.id` y WhatsApp descarta el mensaje antes de que
+llegue. Hace falta un motor parchado (quitar el envoltorio `viewOnceMessage` y el nodo
+`biz_bot` en los botones; Baileys con el parche de `listType` para la lista clásica).
+
+Como no hay forma de detectarlo por la respuesta, es un interruptor explícito:
+
+```python
+wa = get_provider({
+    "provider": "evolution",
+    "base_url": "...", "api_key": "...", "instance": "ventas",
+    "interactive": True,          # solo si tu Evolution está parchada
+})
+
+if wa.supports_interactive:       # esto, no isinstance: los métodos existen siempre
+    await wa.send_buttons(
+        "5215512345678",
+        "¿Confirmas tu cita del jueves?",
+        [{"id": "si", "title": "Sí, confirmo"}, {"id": "no", "title": "Cambiar hora"}],
+        footer="Clínica del Valle",
+    )
+```
+
+Con el interruptor apagado, los dos métodos lanzan `ProviderAPIError` sin llamar al
+motor: quien no tenga el parche se entera en vez de mandar al vacío.
+
+Lo que Evolution hace y el canal oficial no: botones de **enlace, llamada, copiar y
+PIX en un mensaje libre** (Meta solo los permite dentro de una plantilla aprobada).
+Basta con darle `type` al botón: `url` + `url`, `call` + `phone`, `copy` + `code`,
+`pix` + `name`/`key_type`/`key`. Y son **dos listas**: la clásica por omisión (se ve
+en WhatsApp Web y en el teléfono) y la moderna con `native_flow=True` (solo teléfono).
+Como el contrato común solo pasa filas planas, cada fila puede traer `section` y se
+agrupan respetando el orden.
 
 `CloudAPIClient.get_media(media_id)` devuelve bytes y metadata tipada. Evolution
 acepta el objeto completo del webhook o la forma minima con `key.id` que la API usa
@@ -222,7 +259,8 @@ normalizados) funciona igual en ambos. Lo específico vive en cada cliente:
 |---|---|---|
 | Plantillas / ventana 24h | sí (`send_template`) | no |
 | Catálogo de plantillas | sí (`list_templates`, requiere `waba_id`) | no |
-| Enviar listas y botones | sí (`send_list`, `send_buttons`) | no |
+| Enviar listas y botones | sí (`send_list`, `send_buttons`) | sí, con motor parchado (`interactive=True`) |
+| Botón de enlace/llamada/copiar fuera de plantilla | no | sí |
 | Recibir respuesta de listas y botones | sí | sí (normalizada a `interactive`) |
 | Grupos | no | sí (`is_group`, autor en `from_number`) |
 | Alta de números por API | no (se dan de alta en Meta) | sí (`InstanceManager`, QR) |

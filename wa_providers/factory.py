@@ -6,7 +6,8 @@ llama a get_provider(config) y usa la interfaz comun, sin saber cual motor es.
 Config esperado:
   {"provider": "cloudapi", "token": "...", "phone_number_id": "...", "graph_version": "v21.0",
    "waba_id": "..."}   # waba_id solo hace falta para leer el catalogo de plantillas
-  {"provider": "evolution", "base_url": "...", "api_key": "...", "instance": "..."}
+  {"provider": "evolution", "base_url": "...", "api_key": "...", "instance": "...",
+   "interactive": False}  # interactive solo si la Evolution esta parchada (botones/listas)
 
 Opcionales de pool en cualquiera: timeout, max_connections, max_keepalive,
 max_retries, backoff_base, backoff_max.
@@ -47,6 +48,7 @@ def get_provider(config: dict[str, Any]) -> BaseProvider:
             base_url=config["base_url"],
             api_key=config["api_key"],
             instance=config["instance"],
+            interactive=bool(config.get("interactive", False)),
             **pool,
         )
     raise ValueError(f"Proveedor de WhatsApp no soportado: {name!r}")

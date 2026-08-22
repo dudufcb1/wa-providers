@@ -14,6 +14,20 @@ from typing import Any, TypeVar
 from .base import BaseProvider
 from .exceptions import ProviderTransportError
 from .http import PooledHTTPClient
+from .interactive import (
+    BUTTON_ID_MAX,
+    BUTTON_TITLE_MAX,
+    BUTTONS_MAX,
+    HEADER_MAX,
+    INTERACTIVE_BODY_MAX,
+    LIST_MAX_ROWS,
+    LIST_ROW_DESCRIPTION_MAX,
+    LIST_ROW_ID_MAX,
+    LIST_ROW_TITLE_MAX,
+)
+from .interactive import identifier as _identifier
+from .interactive import required_text as _required_text
+from .interactive import visible_text as _visible_text
 from .schemas import (
     InstanceProfile,
     MediaDownload,
@@ -32,16 +46,6 @@ _POOL_KEYS = (
     "backoff_max",
 )
 
-LIST_MAX_ROWS = 10
-LIST_ROW_TITLE_MAX = 24
-LIST_ROW_DESCRIPTION_MAX = 72
-LIST_ROW_ID_MAX = 200
-BUTTONS_MAX = 3
-BUTTON_ID_MAX = 256
-BUTTON_TITLE_MAX = 20
-HEADER_MAX = 60
-INTERACTIVE_BODY_MAX = 1024
-
 # Tope por pagina que acepta el catalogo de plantillas de Graph API.
 TEMPLATES_PAGE_MAX = 250
 
@@ -58,28 +62,6 @@ logger = logging.getLogger(__name__)
 
 # Enum de este paquete cuyo valor es la version en minusculas de lo que manda Meta.
 _WireEnum = TypeVar("_WireEnum", bound=Enum)
-
-
-def _required_text(value: str | None, field: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{field} no puede estar vacio")
-    return value
-
-
-def _visible_text(value: str | None, field: str, limit: int) -> str:
-    text = _required_text(value, field).strip()
-    if len(text) <= limit:
-        return text
-    return text[: limit - 1] + "…"
-
-
-def _identifier(value: str | None, field: str, limit: int) -> str:
-    identifier = _required_text(value, field)
-    if identifier != identifier.strip():
-        raise ValueError(f"{field} no puede tener espacios al inicio o al final")
-    if len(identifier) > limit:
-        raise ValueError(f"{field} no puede exceder {limit} caracteres")
-    return identifier
 
 
 def _enum_from_wire(raw: Any, enum: type[_WireEnum], fallback: _WireEnum) -> _WireEnum:
